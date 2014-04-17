@@ -9,12 +9,7 @@ import java.util.zip.Inflater;
 
 public class PatchApplier {
     public static void apply(BlockFinder blockFinder, InputStream patch, OutputStream target) throws IOException, PatchException, InputException {
-        PatchApplier pa = new PatchApplier(blockFinder, patch, target);
-        try {
-            pa.go();
-        } finally {
-            pa.close();
-        }
+        new PatchApplier(blockFinder, patch, target).go();
     }
 
     public static class OpsSpec {
@@ -54,12 +49,7 @@ public class PatchApplier {
                 ops.dataSize += bytes;
             }
         }
-        PA pa = new PA();
-        try {
-            pa.go();
-        } finally {
-            pa.close();
-        }
+        new PA().go();
         return ops;
     }
 
@@ -68,7 +58,6 @@ public class PatchApplier {
     private final OutputStream target;
     private final int blockSize;
     protected final byte[] dataBuf;
-    private final Inflater inflater;
 
     private PatchApplier(BlockFinder blockFinder, InputStream patch, OutputStream target) throws IOException, PatchException, InputException {
         this.in = new InputStreamReadHelper(patch, InputStreamReadHelper.readChecksumAlgorithm(patch));
@@ -78,12 +67,6 @@ public class PatchApplier {
         blockSize = in.readInt();
         if(blockSize <= 0 || blockSize > Patch.MaxBlockSize) throw new InvalidBlockSize(blockSize);
         dataBuf = new byte[blockSize];
-
-        inflater = new Inflater();
-    }
-
-    protected void close() {
-        inflater.end();
     }
 
     protected void go() throws IOException, InputException, PatchException {
