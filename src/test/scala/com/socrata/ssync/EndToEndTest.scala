@@ -42,14 +42,12 @@ class EndToEndTest extends FunSuite with MustMatchers with PropertyChecks {
     baos.toByteArray
   }
 
-  def ops(patch: Patch): PatchApplier.OpsSpec = {
-    val baos = new ByteArrayOutputStream
-    PatchApplier.ops(new ByteArrayInputStream(patch), baos)
-  }
+  def ops(patch: Patch): Iterator[PatchExplorer.Event] =
+    new PatchExplorer(new ByteArrayInputStream(patch)).asScala
 
   test("No changes to the file works") {
-    forAll { (data: FileChunks) =>
-      val blockSize = 10
+    forAll { (data: FileChunks, blockSizeRaw: Byte) =>
+      val blockSize = (blockSizeRaw & 0xff) + 1
       val sig = signature(data, blockSize)
       val p = patch(data, sig, blockSize * 10)
       val result = apply(data, p)
@@ -58,20 +56,20 @@ class EndToEndTest extends FunSuite with MustMatchers with PropertyChecks {
   }
 
   test("No changes to the file produces no data chunks") {
-    forAll { (data: FileChunks) =>
-      val blockSize = 10
+    forAll { (data: FileChunks, blockSizeRaw: Byte) =>
+      val blockSize = (blockSizeRaw & 0xff) + 1
       val sig = signature(data, blockSize)
       val p = patch(data, sig, blockSize * 10)
-      ops(p).dataCount must equal (0)
+      ops(p).count(_.isInstanceOf[PatchExplorer.DataEvent]) must be (0)
     }
   }
 
   test("Removing chunks works from the file works") {
-    forAll { (data: FileChunks, toRemove: Seq[Int]) =>
+    forAll { (data: FileChunks, toRemove: Seq[Int], blockSizeRaw: Byte) =>
       whenever(data.nonEmpty && toRemove.nonEmpty) {
+        val blockSize = (blockSizeRaw & 0xff) + 1
         val toReallyRemove = toRemove.map(_ % data.length).toSet
         val removed = data.zipWithIndex.filterNot { case (d, i) => toReallyRemove(i) }.map(_._1).toArray
-        val blockSize = 10
         val sig = signature(data, blockSize)
         val p = patch(removed, sig, blockSize * 10)
         val result = apply(data, p)
@@ -82,16 +80,16 @@ class EndToEndTest extends FunSuite with MustMatchers with PropertyChecks {
   }
 
   test("Adding a chunk to the file works") {
-    forAll { (data: FileChunks, newChunk: Array[Byte], insertBefore: Int) =>
+    forAll { (data: FileChunks, newChunk: Array[Byte], insertBefore: Int, blockSizeRaw: Byte) =>
       whenever(data.nonEmpty && insertBefore >= 0) {
+        val blockSize = (blockSizeRaw & 0xff) + 1
         val realInsertPos = insertBefore % data.length
         val inserted = data.take(realInsertPos) ++ Array(newChunk) ++ data.drop(realInsertPos)
-        val blockSize = 10
         val sig = signature(data, blockSize)
         val p = patch(inserted, sig, blockSize * 10)
         val result = apply(data, p)
         result must equal (inserted.flatten)
-        // println(ops(p) + "; orig size: " + data.flatten.length + "; new size: " + inserted.flatten.length + "; patch size: " + p.length)
+        ops(p).foreach(println)
       }
     }
   }
@@ -102,7 +100,6 @@ class EndToEndTest extends FunSuite with MustMatchers with PropertyChecks {
     val blockSize = 5
     val sig = signature(a, blockSize)
     val p = patch(b, sig, blockSize * 10)
-    val result = ops(p)
-    result.dataCount must equal (0)
+    ops(p).count(_.isInstanceOf[PatchExplorer.DataEvent]) must be (0)
   }
 }
