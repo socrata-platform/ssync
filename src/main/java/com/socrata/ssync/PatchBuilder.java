@@ -6,7 +6,7 @@ import java.io.*;
 
 public class PatchBuilder {
     private final OutputStreamWriteHelper out;
-    private final int maxDataBlockSize;
+    private final int blockSize;
 
     // Does NOT take ownership of the outputstream!
     public PatchBuilder(OutputStream outStream, String checksumAlgorithm, int blockSize) throws IOException, NoSuchAlgorithmException {
@@ -14,7 +14,7 @@ public class PatchBuilder {
 
         if(blockSize <= 0 || blockSize >= Patch.MaxBlockSize)
             throw new IllegalArgumentException("blockSize");
-        this.maxDataBlockSize = blockSize * 2;
+        this.blockSize = blockSize;
 
         out.writeCheckumNameWithoutUpdatingChecksum();
         out.writeInt(blockSize);
@@ -37,7 +37,7 @@ public class PatchBuilder {
     public void writeData(byte[] data, int offset, int length) throws IOException {
         while(length != 0) {
             writeOp(Patch.Data);
-            int toWrite = Math.min(length, maxDataBlockSize);
+            int toWrite = Math.min(length, blockSize);
             out.writeInt(toWrite);
             out.writeBytes(data, offset, toWrite);
             length -= toWrite;
