@@ -74,7 +74,6 @@ class EndToEndTest extends FunSuite with MustMatchers with PropertyChecks {
         val p = patch(removed, sig, blockSize * 10)
         val result = apply(data, p)
         result must equal (removed.flatten)
-        // println(ops(p) + "; orig size: " + data.flatten.length + "; new size: " + removed.flatten.length + "; patch size: " + p.length)
       }
     }
   }
@@ -89,7 +88,6 @@ class EndToEndTest extends FunSuite with MustMatchers with PropertyChecks {
         val p = patch(inserted, sig, blockSize * 10)
         val result = apply(data, p)
         result must equal (inserted.flatten)
-        ops(p).foreach(println)
       }
     }
   }
