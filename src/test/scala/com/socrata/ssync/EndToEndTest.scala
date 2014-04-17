@@ -10,6 +10,8 @@ class EndToEndTest extends FunSuite with MustMatchers with PropertyChecks {
   type Signature = Array[Byte]
   type Patch = Array[Byte]
 
+  implicit val propertyCheckConfig = PropertyCheckConfig(maxSize = 300, minSuccessful = 200, maxDiscarded = 1000)
+
   def chunkStream(in: FileChunks) =
     new SequenceInputStream(in.iterator.map(new ByteArrayInputStream(_)).asJavaEnumeration)
 
