@@ -35,19 +35,16 @@ public class SSync {
                 }
                 break;
             case 2:
-                try(FileInputStream sourceFile = new FileInputStream(args[0])) {
-                    try(FileInputStream sigFile = new FileInputStream(args[1])) {
-                        doComputeDiff(sourceFile, sigFile, System.out);
-                    }
+                try(FileInputStream sourceFile = new FileInputStream(args[0]);
+                    FileInputStream sigFile = new FileInputStream(args[1])) {
+                    doComputeDiff(sourceFile, sigFile, System.out);
                 }
                 break;
             case 3:
-                try(FileInputStream sourceFile = new FileInputStream(args[0])) {
-                    try(FileInputStream sigFile = new FileInputStream(args[1])) {
-                        try(FileOutputStream patchFile = new FileOutputStream(args[2])) {
-                            doComputeDiff(sourceFile, sigFile, patchFile);
-                        }
-                    }
+                try(FileInputStream sourceFile = new FileInputStream(args[0]);
+                    FileInputStream sigFile = new FileInputStream(args[1]);
+                    FileOutputStream patchFile = new FileOutputStream(args[2])) {
+                    doComputeDiff(sourceFile, sigFile, patchFile);
                 }
                 break;
             default:
@@ -96,19 +93,16 @@ public class SSync {
                 }
                 break;
             case 2:
-                try(RandomAccessFile sourceFile = new RandomAccessFile(args[0], "r")) {
-                    try(FileInputStream patchFile = new FileInputStream(args[1])) {
-                        doApplyPatch(sourceFile, patchFile, System.out);
-                    }
+                try(RandomAccessFile sourceFile = new RandomAccessFile(args[0], "r");
+                    FileInputStream patchFile = new FileInputStream(args[1])) {
+                    doApplyPatch(sourceFile, patchFile, System.out);
                 }
                 break;
             case 3:
-                try(RandomAccessFile sourceFile = new RandomAccessFile(args[0], "r")) {
-                    try(FileInputStream patchFile = new FileInputStream(args[1])) {
-                        try(FileOutputStream outFile = new FileOutputStream(args[2])) {
-                            doApplyPatch(sourceFile, patchFile, outFile);
-                        }
-                    }
+                try(RandomAccessFile sourceFile = new RandomAccessFile(args[0], "r");
+                    FileInputStream patchFile = new FileInputStream(args[1]);
+                    FileOutputStream outFile = new FileOutputStream(args[2])) {
+                    doApplyPatch(sourceFile, patchFile, outFile);
                 }
                 break;
             default:
@@ -136,10 +130,9 @@ public class SSync {
                 }
                 break;
             case 2:
-                try(FileInputStream in = new FileInputStream(args[0])) {
-                    try(FileOutputStream out = new FileOutputStream(args[1])) {
-                        doComputeSignature(in, out);
-                    }
+                try(FileInputStream in = new FileInputStream(args[0]);
+                    FileOutputStream out = new FileOutputStream(args[1])) {
+                    doComputeSignature(in, out);
                 }
                 break;
             default:
