@@ -141,9 +141,4 @@ public class SignatureTable {
         }
         return -1;
     }
-
-    public static void main(String[] args) throws Exception {
-        SignatureTable st = new SignatureTable(new java.io.FileInputStream("blah"));
-        System.out.println(st);
-    }
 }

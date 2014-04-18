@@ -66,14 +66,4 @@ public class SignatureComputer {
             out.writeBytes(signatures[i].strongHash);
         }
     }
-
-    public static void main(String[] args) throws Exception {
-        FileInputStream in = new FileInputStream("/home/robertm/.bashrc");
-        FileOutputStream out = new FileOutputStream("blah");
-
-        SignatureComputer.compute("SHA1", "MD5", 1024 * 128, in, out);
-
-        in.close();
-        out.close();
-    }
 }

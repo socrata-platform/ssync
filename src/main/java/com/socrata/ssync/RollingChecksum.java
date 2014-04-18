@@ -37,16 +37,4 @@ public class RollingChecksum {
         b = (b - blockSize * oldByte + a) & 0xffff;
         return a + (b << 16);
     }
-
-    public static void main(String[] args) {
-        byte[] bytes = new byte[] { 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 };
-        RollingChecksum rs = new RollingChecksum(8);
-        int current = rs.forBlock(bytes, 0, 8);
-        System.out.println(current);
-        for(int i = 0; i != 8; i++) {
-            current = rs.roll(bytes[i], bytes[i + 8]);
-        }
-        System.out.println(current);
-        System.out.println(rs.forBlock(bytes, 8, 8));
-    }
 }
