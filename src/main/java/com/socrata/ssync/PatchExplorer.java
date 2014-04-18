@@ -132,17 +132,4 @@ public class PatchExplorer implements Iterator<PatchExplorer.Event> {
     private int readOp() throws IOException, InputException {
         return in.readByte() & 0xff;
     }
-
-    public static void main(String[] args) throws Exception {
-        PatchExplorer pa;
-
-        if(args.length == 0) {
-            pa = new PatchExplorer(System.in);
-        } else {
-            pa = new PatchExplorer(new BufferedInputStream(new FileInputStream(args[0])));
-        }
-        while(pa.hasNext()) {
-            System.out.println(pa.next());
-        }
-    }
 }
