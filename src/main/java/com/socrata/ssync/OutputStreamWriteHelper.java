@@ -1,5 +1,6 @@
 package com.socrata.ssync;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -60,6 +61,18 @@ final class OutputStreamWriteHelper {
                 writeByte((value & 0x7F) | 0x80);
                 value >>>= 7;
             }
+        }
+    }
+
+    static int intSize(int n) {
+        try {
+            ByteCountingOutputStream bcos = new ByteCountingOutputStream();
+            OutputStreamWriteHelper out = new OutputStreamWriteHelper(bcos, NoopMessageDigest.Instance);
+            bcos.reset(); // not necessary now, but maybe the helper's ctor will write in the future.
+            out.writeInt(n);
+            return (int)bcos.getCount();
+        } catch(IOException e) {
+            throw new RuntimeException("IO exception while writing to ByteArrayOutputStream?", e);
         }
     }
 

@@ -1,7 +1,5 @@
 package com.socrata.ssync;
 
-import com.socrata.ssync.exceptions.input.InputException;
-
 import java.io.*;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -10,6 +8,11 @@ public class SignatureComputer {
     private final OutputStreamWriteHelper out;
     private final MessageDigest strongHasher;
     private final int blockSize;
+
+    private static final int FullSignatureCountLength;
+    static {
+        FullSignatureCountLength = OutputStreamWriteHelper.intSize(SignatureTable.SignatureBlockSize);
+    }
 
     private static class Signature {
         final int weakHash;
@@ -20,13 +23,16 @@ public class SignatureComputer {
         }
     }
 
-    private SignatureComputer(String checksumAlgorithm, String strongHashAlgorithm, int blockSize, OutputStream out) throws NoSuchAlgorithmException, IOException, InputException {
+    private SignatureComputer(String checksumAlgorithm, String strongHashAlgorithm, int blockSize, OutputStream out) throws NoSuchAlgorithmException, IOException {
         this.out = new OutputStreamWriteHelper(out, MessageDigest.getInstance(checksumAlgorithm));
         this.strongHasher = MessageDigest.getInstance(strongHashAlgorithm);
+
+        if(blockSize < 1 || blockSize > Patch.MaxBlockSize) throw new IllegalArgumentException("blockSize: " + blockSize);
+
         this.blockSize = blockSize;
     }
 
-    public static void compute(String checksumAlgorithm, String strongHashAlgorithm, int blockSize, InputStream in, OutputStream out) throws NoSuchAlgorithmException, IOException, InputException {
+    public static void compute(String checksumAlgorithm, String strongHashAlgorithm, int blockSize, InputStream in, OutputStream out) throws NoSuchAlgorithmException, IOException {
         new SignatureComputer(checksumAlgorithm, strongHashAlgorithm, blockSize, out).go(in);
     }
 
@@ -80,6 +86,26 @@ public class SignatureComputer {
         out.writeChecksumWithoutUpdatingChecksum();
     }
 
+    public static long computeLength(String checksumAlgorithm, String strongHashAlgorithm, int blockSize, long fileLength) throws NoSuchAlgorithmException {
+        try {
+            ByteCountingOutputStream out = new ByteCountingOutputStream();
+            SignatureComputer signatureComputer = new SignatureComputer(checksumAlgorithm, strongHashAlgorithm, blockSize, out);
+            signatureComputer.writeHeader();
+            signatureComputer.writeFooter();
+            long headerFooterSize = out.getCount();
+            long blocks = fileLength / blockSize;
+            if(fileLength % blockSize != 0) blocks += 1;
+            long fullSigBlocks = blocks / SignatureTable.SignatureBlockSize;
+            int leftoverSigs = (int)(blocks % SignatureTable.SignatureBlockSize); // I wonder why long % int doesn't have type int...
+            int signatureSize = 4 + signatureComputer.strongHasher.getDigestLength();
+            long fullSigBlockLength = fullSigBlocks * (FullSignatureCountLength + SignatureTable.SignatureBlockSize * signatureSize);
+            long leftoverSigBlockLength = OutputStreamWriteHelper.intSize(leftoverSigs) + leftoverSigs * signatureSize;
+            return headerFooterSize + fullSigBlockLength + leftoverSigBlockLength;
+        } catch (IOException e) {
+            throw new RuntimeException("IO exception while writing to ByteArrayOutputStream?", e);
+        }
+    }
+
     public static class SignatureFileInputStream extends InputStream {
         private final SignatureComputer signatureComputer;
         private final SignatureComputer.Stepper stepper;
@@ -87,7 +113,7 @@ public class SignatureComputer {
         private final VisibleByteArrayOutputStream out;
         private boolean doneReading = false;
 
-        public SignatureFileInputStream(String checksumAlgorithm, String strongHashAlgorithm, int blockSize, InputStream underlying) throws NoSuchAlgorithmException, IOException, InputException {
+        public SignatureFileInputStream(String checksumAlgorithm, String strongHashAlgorithm, int blockSize, InputStream underlying) throws NoSuchAlgorithmException, IOException {
             this.out = new VisibleByteArrayOutputStream();
             this.signatureComputer = new SignatureComputer(checksumAlgorithm, strongHashAlgorithm, blockSize, out);
             this.stepper = signatureComputer.new Stepper(underlying);
