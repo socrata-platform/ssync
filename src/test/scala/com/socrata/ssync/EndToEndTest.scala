@@ -44,6 +44,9 @@ class EndToEndTest extends FunSuite with MustMatchers with PropertyChecks {
     baos.toByteArray
   }
 
+  def applyStream(orig: FileChunks, patch: Patch): Array[Byte] =
+    Util.readAll(new PatchApplier.PatchInputStream(fileChunkFinder(orig), new ByteArrayInputStream(patch)))
+
   def ops(patch: Patch): Iterator[PatchExplorer.Event] =
     new PatchExplorer(new ByteArrayInputStream(patch)).asScala
 
@@ -66,7 +69,18 @@ class EndToEndTest extends FunSuite with MustMatchers with PropertyChecks {
     }
   }
 
-  test("Removing chunks works from the file works") {
+  test("No changes to the file produces the same result via applier and input stream") {
+    forAll { (data: FileChunks, blockSizeRaw: Byte) =>
+      val blockSize = (blockSizeRaw & 0xff) + 1
+      val sig = signature(data, blockSize)
+      val p = patch(data, sig, blockSize * 10)
+      val result = apply(data, p);
+      val result2 = applyStream(data, p);
+      result2 must equal (result)
+    }
+  }
+
+  test("Removing chunks from the file works") {
     forAll { (data: FileChunks, toRemove: Seq[Int], blockSizeRaw: Byte) =>
       whenever(data.nonEmpty && toRemove.nonEmpty) {
         val blockSize = (blockSizeRaw & 0xff) + 1
@@ -76,6 +90,21 @@ class EndToEndTest extends FunSuite with MustMatchers with PropertyChecks {
         val p = patch(removed, sig, blockSize * 10)
         val result = apply(data, p)
         result must equal (removed.flatten)
+      }
+    }
+  }
+
+  test("Removing chunks from the file produces the same result via applier and input stream") {
+    forAll { (data: FileChunks, toRemove: Seq[Int], blockSizeRaw: Byte) =>
+      whenever(data.nonEmpty && toRemove.nonEmpty) {
+        val blockSize = (blockSizeRaw & 0xff) + 1
+        val toReallyRemove = toRemove.map(_ % data.length).toSet
+        val removed = data.zipWithIndex.filterNot { case (d, i) => toReallyRemove(i) }.map(_._1).toArray
+        val sig = signature(data, blockSize)
+        val p = patch(removed, sig, blockSize * 10)
+        val result = apply(data, p)
+        val result2 = applyStream(data, p)
+        result2 must equal (result)
       }
     }
   }
@@ -90,6 +119,21 @@ class EndToEndTest extends FunSuite with MustMatchers with PropertyChecks {
         val p = patch(inserted, sig, blockSize * 10)
         val result = apply(data, p)
         result must equal (inserted.flatten)
+      }
+    }
+  }
+
+  test("Adding a chunk to the file produces the same result via applier and input stream") {
+    forAll { (data: FileChunks, newChunk: Array[Byte], insertBefore: Int, blockSizeRaw: Byte) =>
+      whenever(data.nonEmpty && insertBefore >= 0) {
+        val blockSize = (blockSizeRaw & 0xff) + 1
+        val realInsertPos = insertBefore % data.length
+        val inserted = data.take(realInsertPos) ++ Array(newChunk) ++ data.drop(realInsertPos)
+        val sig = signature(data, blockSize)
+        val p = patch(inserted, sig, blockSize * 10)
+        val result = apply(data, p)
+        val result2 = applyStream(data, p)
+        result2 must equal (result)
       }
     }
   }

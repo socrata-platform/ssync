@@ -28,27 +28,103 @@ public class PatchApplier {
         dataBuf = new byte[blockSize];
     }
 
+    public static class PatchInputStreamIOException extends IOException {
+        private PatchInputStreamIOException(Exception e) {
+            super(e);
+        }
+    }
+
+    public static class PatchInputStream extends InputStream {
+        private final VisibleByteArrayOutputStream out;
+        private final PatchApplier patchApplier;
+        private final InputStream underlying;
+        private boolean doneReading;
+
+        public PatchInputStream(BlockFinder blockFinder, InputStream patch) throws IOException {
+            try {
+                this.out = new VisibleByteArrayOutputStream();
+                this.patchApplier = new PatchApplier(blockFinder, patch, out);
+                this.underlying = patch;
+                this.doneReading = false;
+            } catch (PatchException | InputException e) {
+                throw new PatchInputStreamIOException(e);
+            }
+        }
+
+        @Override
+        public int read() throws IOException {
+            try {
+                if(!ensureAvailable()) return -1;
+                return out.read();
+            } catch (PatchException | InputException e) {
+                throw new PatchInputStreamIOException(e);
+            }
+        }
+
+        @Override
+        public int read(byte[] bs) throws IOException {
+            return read(bs, 0, bs.length);
+        }
+
+        @Override
+        public int read(byte[] bs, int off, int len) throws IOException {
+            try {
+                int total = 0;
+                while(len > 0 && ensureAvailable()) {
+                    int amt = out.read(bs, off, len);
+                    total += amt;
+                    off += amt;
+                    len -= amt;
+                }
+                if(total == 0) return -1;
+                return total;
+            } catch (PatchException | InputException e) {
+                throw new PatchInputStreamIOException(e);
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            underlying.close();
+        }
+
+        private boolean ensureAvailable() throws IOException, PatchException, InputException {
+            while(out.available() == 0 && !doneReading) {
+                out.reset();
+                if(!patchApplier.step()) {
+                    doneReading = true;
+                    patchApplier.checkFooter();
+                }
+            }
+            return out.available() != 0;
+        }
+    }
+
     private void go() throws IOException, InputException, PatchException {
-        mainloop();
+        while(step()) {}
+        checkFooter();
+    }
+
+    private void checkFooter() throws IOException, InputException {
         byte[] result = in.checksum();
         byte[] checksumInPatch = new byte[result.length];
         in.readFullyWithoutUpdatingChecksum(checksumInPatch);
         if(!java.util.Arrays.equals(result, checksumInPatch)) throw new ChecksumMismatch();
     }
 
-    private void mainloop() throws IOException, PatchException, InputException {
-        int code;
-        while((code = readOp()) != Patch.End) {
-            switch(code) {
+    private boolean step() throws IOException, InputException, PatchException {
+        int code = readOp();
+        switch(code) {
             case Patch.Block:
                 processBlock();
-                break;
+                return true;
             case Patch.Data:
                 processData();
-                break;
+                return true;
+            case Patch.End:
+                return false;
             default:
                 throw new UnknownOp(code);
-            }
         }
     }
 

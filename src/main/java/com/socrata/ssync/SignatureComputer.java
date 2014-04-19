@@ -128,24 +128,21 @@ public class SignatureComputer {
             underlying.close();
         }
 
-        private void step() throws IOException {
-            if(out.available() == 0 && !doneReading) {
+        private boolean ensureAvailable() throws IOException {
+            while(out.available() == 0 && !doneReading) {
                 out.reset();
                 if(!stepper.step()) {
-                    signatureComputer.writeFooter();
                     doneReading = true;
+                    signatureComputer.writeFooter();
                 }
             }
+            return out.available() != 0;
         }
 
         @Override
         public int read() throws IOException {
-            int code;
-            do {
-                step();
-                code = out.read();
-            } while(code == -1 && !doneReading);
-            return code;
+            if(!ensureAvailable()) return -1;
+            return out.read();
         }
 
         @Override
@@ -156,23 +153,14 @@ public class SignatureComputer {
         @Override
         public int read(byte[] bs, int off, int len) throws IOException {
             int total = 0;
-            int code;
-            while(len > 0 && (code = readMore(bs, off, len)) != -1) {
-                total += code;
-                off += code;
-                len -= code;
+            while(len > 0 && ensureAvailable()) {
+                int amt = out.read(bs, off, len);
+                total += amt;
+                off += amt;
+                len -= amt;
             }
             if(total == 0) return -1;
             return total;
-        }
-
-        private int readMore(byte[] bs, int off, int len) throws IOException {
-            int code;
-            do {
-                step();
-                code = out.read(bs, off, len);
-            } while(code == -1 && !doneReading);
-            return code;
         }
     }
 
