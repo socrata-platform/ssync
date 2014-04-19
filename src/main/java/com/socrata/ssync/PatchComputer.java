@@ -146,13 +146,6 @@ public class PatchComputer {
         return false;
     }
 
-    private void go() throws IOException {
-        readIntoBuffer();
-        while(state != StateDone) { step(); }
-        flush();
-        patch.writeEnd();
-    }
-
     private void readIntoBuffer() throws IOException {
         if(sawEOF) return;
 
@@ -206,5 +199,69 @@ public class PatchComputer {
             throws IOException, NoSuchAlgorithmException
     {
         new PatchComputer(in, signatureTable, checksumAlgorithm, maxMemory, out).go();
+    }
+
+    private void go() throws IOException {
+        while(state != StateDone) { step(); }
+        finish();
+    }
+
+    private void finish() throws IOException {
+        flush();
+        patch.writeEnd();
+    }
+
+    public static class PatchComputerInputStream extends InputStream {
+        private final VisibleByteArrayOutputStream out;
+        private final PatchComputer patchComputer;
+        private final InputStream underlying;
+
+        public PatchComputerInputStream(InputStream in, SignatureTable signatureTable, String checksumAlgorithm, int maxMemory)
+                throws IOException, NoSuchAlgorithmException
+        {
+            this.out = new VisibleByteArrayOutputStream();
+            this.patchComputer = new PatchComputer(in, signatureTable, checksumAlgorithm, maxMemory, out);
+            this.underlying = in;
+        }
+
+        @Override
+        public int read() throws IOException {
+            if(!ensureAvailable()) return -1;
+            return out.read();
+        }
+
+        @Override
+        public int read(byte[] bs) throws IOException {
+            return read(bs, 0, bs.length);
+        }
+
+        @Override
+        public int read(byte[] bs, int off, int len) throws IOException {
+            int total = 0;
+            while(len > 0 && ensureAvailable()) {
+                int amt = out.read(bs, off, len);
+                total += amt;
+                off += amt;
+                len -= amt;
+            }
+            if(total == 0) return -1;
+            return total;
+        }
+
+        @Override
+        public void close() throws IOException {
+            underlying.close();
+        }
+
+        private boolean ensureAvailable() throws IOException {
+            while(out.available() == 0 && patchComputer.state != StateDone) {
+                out.reset();
+                patchComputer.step();
+                if(patchComputer.state == StateDone) {
+                    patchComputer.finish();
+                }
+            }
+            return out.available() != 0;
+        }
     }
 }
