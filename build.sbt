@@ -17,6 +17,8 @@ autoScalaLibrary := false
 
 autoScalaLibrary in test := true
 
+crossPaths := false
+
 libraryDependencies ++= Seq(
   "org.scalatest" %% "scalatest" % "2.1.0" % "test",
   "org.scalacheck" %% "scalacheck" % "1.11.3" % "test"
