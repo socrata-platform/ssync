@@ -8,11 +8,8 @@ public class SignatureComputer {
     private final OutputStreamWriteHelper out;
     private final MessageDigest strongHasher;
     private final int blockSize;
-
-    private static final int FullSignatureCountLength;
-    static {
-        FullSignatureCountLength = OutputStreamWriteHelper.intSize(SignatureTable.SignatureBlockSize);
-    }
+    private final int signatureBlockSize;
+    private final int fullSignatureCountLength;
 
     private static class Signature {
         final int weakHash;
@@ -26,6 +23,8 @@ public class SignatureComputer {
     private SignatureComputer(String checksumAlgorithm, String strongHashAlgorithm, int blockSize, OutputStream out) throws NoSuchAlgorithmException, IOException {
         this.out = new OutputStreamWriteHelper(out, MessageDigest.getInstance(checksumAlgorithm));
         this.strongHasher = MessageDigest.getInstance(strongHashAlgorithm);
+        this.signatureBlockSize = SignatureTable.signatureBlockSizeForBlockSize(blockSize);
+        this.fullSignatureCountLength = OutputStreamWriteHelper.intSize(signatureBlockSize);
 
         if(blockSize < 1 || blockSize > Patch.MaxBlockSize) throw new IllegalArgumentException("blockSize: " + blockSize);
 
@@ -48,7 +47,7 @@ public class SignatureComputer {
     private class Stepper {
         private final RollingChecksum rc = new RollingChecksum(blockSize);
         private final byte block[] = new byte[blockSize];
-        private final Signature[] signatures = new Signature[SignatureTable.SignatureBlockSize];
+        private final Signature[] signatures = new Signature[signatureBlockSize];
         int signatureCount = 0;
 
         private final InputStream in;
@@ -64,7 +63,7 @@ public class SignatureComputer {
                 strongHasher.update(block, 0, currentBlockSize);
                 byte[] strongHash = strongHasher.digest();
                 signatures[signatureCount++] = new Signature(weakHash, strongHash);
-                if(signatureCount == SignatureTable.SignatureBlockSize) {
+                if(signatureCount == signatureBlockSize) {
                     flushSignatures(signatures, signatureCount);
                     signatureCount = 0;
                 }
@@ -80,6 +79,7 @@ public class SignatureComputer {
         out.writeCheckumNameWithoutUpdatingChecksum();
         out.writeInt(blockSize);
         out.writeShortUTF8(strongHasher.getAlgorithm());
+        out.writeInt(signatureBlockSize);
     }
 
     private void writeFooter() throws IOException {
@@ -95,10 +95,10 @@ public class SignatureComputer {
             long headerFooterSize = out.getCount();
             long blocks = fileLength / blockSize;
             if(fileLength % blockSize != 0) blocks += 1;
-            long fullSigBlocks = blocks / SignatureTable.SignatureBlockSize;
-            int leftoverSigs = (int)(blocks % SignatureTable.SignatureBlockSize); // I wonder why long % int doesn't have type int...
+            long fullSigBlocks = blocks / signatureComputer.signatureBlockSize;
+            int leftoverSigs = (int)(blocks % signatureComputer.signatureBlockSize); // I wonder why long % int doesn't have type int...
             int signatureSize = 4 + signatureComputer.strongHasher.getDigestLength();
-            long fullSigBlockLength = fullSigBlocks * (FullSignatureCountLength + SignatureTable.SignatureBlockSize * signatureSize);
+            long fullSigBlockLength = fullSigBlocks * (signatureComputer.fullSignatureCountLength + signatureComputer.signatureBlockSize * signatureSize);
             long leftoverSigBlockLength = OutputStreamWriteHelper.intSize(leftoverSigs) + leftoverSigs * signatureSize;
             return headerFooterSize + fullSigBlockLength + leftoverSigBlockLength;
         } catch (IOException e) {

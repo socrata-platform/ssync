@@ -2,9 +2,7 @@ package com.socrata.ssync;
 
 import com.socrata.ssync.exceptions.input.ChecksumMismatch;
 import com.socrata.ssync.exceptions.input.InputException;
-import com.socrata.ssync.exceptions.signature.InvalidSignatureCount;
-import com.socrata.ssync.exceptions.signature.SignatureException;
-import com.socrata.ssync.exceptions.signature.UnknownStrongHashAlgorithm;
+import com.socrata.ssync.exceptions.signature.*;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -15,7 +13,13 @@ import java.util.ArrayList;
 import java.util.Comparator;
 
 public class SignatureTable {
-    static final int SignatureBlockSize = 0xffff;
+    static final int MaxSignatureBlockSize = 0xffff;
+
+    static int signatureBlockSizeForBlockSize(int blockSize) {
+        // each block of signatures should represent ~1M of data in order to
+        // make streaming signature files practical.
+        return Math.min(1 + (1024*1024) / blockSize, SignatureTable.MaxSignatureBlockSize);
+    }
 
     private static class Entry {
         final int blockNum;
@@ -41,12 +45,21 @@ public class SignatureTable {
 
     public SignatureTable(InputStream inStream) throws IOException, InputException, SignatureException {
         InputStreamReadHelper in = new InputStreamReadHelper(inStream, InputStreamReadHelper.readChecksumAlgorithm(inStream));
+
         blockSize = in.readInt();
+        if(blockSize <= 0 || blockSize > Patch.MaxBlockSize) {
+            throw new InvalidBlockSize(blockSize);
+        }
+
         String algorithmName = in.readShortUTF8();
         try {
             strongHasher = MessageDigest.getInstance(algorithmName);
         } catch(NoSuchAlgorithmException e) {
             throw new UnknownStrongHashAlgorithm(algorithmName);
+        }
+        int signatureBlockSize = in.readInt();
+        if(signatureBlockSize <= 0 || signatureBlockSize > MaxSignatureBlockSize) {
+            throw new InvalidSignatureBlockSize(signatureBlockSize);
         }
         int strongHashSize = strongHasher.getDigestLength();
         strongHash = new byte[strongHashSize];
@@ -54,14 +67,14 @@ public class SignatureTable {
         ArrayList<Entry> entryBuilder = new ArrayList<>();
         while(true) {
             int count = in.readInt();
-            if(count < 0 || count > SignatureBlockSize) throw new InvalidSignatureCount(count);
+            if(count < 0 || count > signatureBlockSize) throw new InvalidSignatureCount(count);
             for(int i = 0; i != count; ++i) {
                 int weakHash = in.readInt4();
                 byte[] strongHash = new byte[strongHashSize];
                 in.readBytes(strongHash, strongHashSize);
                 entryBuilder.add(new Entry(entryBuilder.size(), weakHash, strongHash));
             }
-            if(count != SignatureBlockSize) break;
+            if(count != signatureBlockSize) break;
         }
 
         byte[] checksum = in.checksum();
