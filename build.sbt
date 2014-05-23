@@ -9,6 +9,8 @@ name := "ssync"
 
 version := "1.0.0"
 
+javacOptions in doc := Seq()
+
 previousArtifact <<= (name) { name => None /* Some("com.socrata" % name % "1.0.0") */ }
 
 packageOptions in (Compile, packageBin) <++= (mainClass in Compile) map {
