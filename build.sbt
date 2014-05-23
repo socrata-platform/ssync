@@ -1,8 +1,15 @@
+import com.socrata.cloudbeessbt.SocrataCloudbeesSbt
+import com.typesafe.tools.mima.plugin.MimaKeys._
+
+seq(SocrataCloudbeesSbt.socrataBuildSettings : _*)
+
+seq(SocrataCloudbeesSbt.socrataProjectSettings(assembly=false) : _*)
+
 name := "ssync"
 
-organization := "com.socrata"
-
 version := "1.0.0"
+
+previousArtifact <<= (name) { name => None /* Some("com.socrata" % name % "1.0.0") */ }
 
 mainClass in Compile := Some("com.socrata.ssync.SSync")
 
