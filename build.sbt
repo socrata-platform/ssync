@@ -11,8 +11,6 @@ version := "1.0.0"
 
 previousArtifact <<= (name) { name => None /* Some("com.socrata" % name % "1.0.0") */ }
 
-mainClass in Compile := Some("com.socrata.ssync.SSync")
-
 packageOptions in (Compile, packageBin) <++= (mainClass in Compile) map {
   case Some(mc) =>
     Seq(Package.ManifestAttributes(java.util.jar.Attributes.Name.MAIN_CLASS -> mc))
@@ -32,4 +30,3 @@ libraryDependencies ++= Seq(
 )
 
 scalaVersion := "2.10.4"
-
