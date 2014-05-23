@@ -3,3 +3,5 @@ resolvers ++= Seq(
 )
 
 addSbtPlugin("com.socrata" % "socrata-cloudbees-sbt" % "1.1.1")
+
+addSbtPlugin("com.jsuereth" % "xsbt-gpg-plugin" % "0.6")
