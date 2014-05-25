@@ -7,11 +7,11 @@ seq(SocrataCloudbeesSbt.socrataProjectSettings(assembly=false) : _*)
 
 name := "ssync"
 
-version := "1.0.0"
+version := "1.1.0-SNAPSHOT"
 
 javacOptions in doc := Seq()
 
-previousArtifact <<= (name) { name => None /* Some("com.socrata" % name % "1.0.0") */ }
+previousArtifact <<= (name) { name => Some("com.socrata" % name % "1.0.0") }
 
 packageOptions in (Compile, packageBin) <++= (mainClass in Compile) map {
   case Some(mc) =>
