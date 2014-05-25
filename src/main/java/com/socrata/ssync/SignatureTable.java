@@ -38,9 +38,55 @@ public class SignatureTable {
     public final int blockSize;
     private final MessageDigest strongHasher;
     private final byte[] strongHash;
+    private final Stats stats = new Stats();
 
     private static int hash16(int weakHash) {
             return (weakHash >> 16 ^ weakHash) & 0xffff;
+    }
+
+    public static class Stats implements Cloneable {
+        private long totalProbes;
+        private long weak16Hits;
+        private long weakHits;
+        private long strongProbes;
+        private long strongHits;
+
+        public long getTotalProbes() {
+            return totalProbes;
+        }
+
+        public long getWeak16Hits() {
+            return weak16Hits;
+        }
+
+        public long getWeakHits() {
+            return weakHits;
+        }
+
+        public long getStrongProbes() {
+            return strongProbes;
+        }
+
+        public long strongHits() {
+            return strongHits;
+        }
+
+        private void reset() {
+            totalProbes = weak16Hits = weakHits = strongProbes = strongHits = 0L;
+        }
+
+        public String toString() {
+            return String.format("Total probes: %d; weak16 hits: %d; weak hits: %d; strong probes: %d; strong hits: %d",
+                    totalProbes, weak16Hits, weakHits, strongProbes, strongHits);
+        }
+
+        public Stats clone() {
+            try {
+                return (Stats) super.clone();
+            } catch (CloneNotSupportedException e) {
+                throw new RuntimeException("SignatureTable.Stats implements cloneable but threw CloneNotSupportedException?");
+            }
+        }
     }
 
     public SignatureTable(InputStream inStream) throws IOException, InputException, SignatureException {
@@ -110,14 +156,30 @@ public class SignatureTable {
         }
     }
 
+    public Stats getStats() {
+        return stats.clone();
+    }
+
+    public Stats getStatsView() {
+        return stats;
+    }
+
+    public void resetStats() {
+        stats.reset();
+    }
+
     public int findBlock(int weakHash, byte[] block, int offset, int len) {
+        stats.totalProbes += 1;
+
         int potentialsListIdx = hash16(weakHash) << 1;
         int start = entries[potentialsListIdx];
         int end = entries[potentialsListIdx + 1];
         if(start == end) return -1; // nothing even with this 16-bit hash
+        stats.weak16Hits += 1;
 
         int p = findFirstWeakEntry(start, end, weakHash);
         if(p == -1) return -1; // nothing with this weak hash
+        stats.weakHits += 1;
 
         try {
             strongHasher.update(block, offset, Math.min(blockSize, len));
@@ -127,7 +189,9 @@ public class SignatureTable {
         }
 
         do {
+            stats.strongProbes += 1;
             if(java.util.Arrays.equals(strongHash, allEntries[p].strongHash)) {
+                stats.strongHits += 1;
                 return allEntries[p].blockNum;
             }
             p += 1;
