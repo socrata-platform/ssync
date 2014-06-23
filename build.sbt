@@ -7,8 +7,6 @@ seq(SocrataCloudbeesSbt.socrataProjectSettings(assembly=false) : _*)
 
 name := "ssync"
 
-version := "1.1.0-SNAPSHOT"
-
 javacOptions in doc := Seq()
 
 previousArtifact <<= (name) { name => Some("com.socrata" % name % "1.0.0") }
