@@ -1,0 +1,36 @@
+SHORTSTRING 1 byte length header; that many bytes of UTF-8
+VARINT      1-5 bytes, protobuf unsigned varint encoding
+INT32       4 bytes, big-endian
+BYTE        A single byte
+BYTES       Raw bytes; no length header implied
+
+Signature file
+--------------
+
+SHORTSTRING   checksum algorithm
+VARINT        block size
+SHORTSTRING   strong hash algorithm
+VARINT        number of signatures per signature block (N)
+VARINT        number of signatures in this block (n)                         \  repeated
+INT32         weak hash   \ repeated n times                                  > until n != N
+BYTES         stronghash  / (length of BYTES determined by strong hash alg)  /
+BYTES         checksum: hash of everything after the checksum algorithm (length determined by that algorithm)
+
+Patch file
+----------
+
+SHORTSTRING   checksum algorithm
+VARINT        block size
+BYTE          op (0 = block; 1 = data; 255 = end) \ repeated until op = 0
+BLOCKDATA(op)                                     /
+BYTES         checksum: hash of everything after the checksum algorithm (length determined by that algorithm)
+
+BLOCK(block):
+  VARINT      number of block from signature file
+
+BLOCK(data):
+  VARINT      number of bytes (must be <= block size)
+  BYTES       that many bytes
+
+BLOCK(end):
+  {empty}
