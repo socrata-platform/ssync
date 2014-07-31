@@ -21,7 +21,7 @@ Patch file
 
 SHORTSTRING   checksum algorithm
 VARINT        block size
-BYTE          op (0 = block; 1 = data; 255 = end) \ repeated until op = 0
+BYTE          op (0 = block; 1 = data; 255 = end) \ repeated until op = 255
 BLOCKDATA(op)                                     /
 BYTES         checksum: hash of everything after the checksum algorithm (length determined by that algorithm)
 
