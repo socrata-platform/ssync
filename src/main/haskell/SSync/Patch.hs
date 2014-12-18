@@ -32,7 +32,7 @@ data Chunk = Block Word32
            | End
              deriving (Show)
 
-type ChunkifyT m r = ConduitM ByteString Chunk (StateT SizedBuilder (ReaderT ParsedST m)) r
+type ChunkifyT m r = ConduitM ByteString Chunk (StateT SizedBuilder m) r
 
 data SizedBuilder = SizedBuilder (DL.DList ByteString) {-# UNPACK #-} !Int
 sbEmpty :: SizedBuilder
@@ -47,10 +47,9 @@ builderLength (SizedBuilder _ l) = l
 builder :: SizedBuilder -> (DL.DList ByteString)
 builder (SizedBuilder b _) = b
 
-atLeastBlockSizeOrEnd :: (MonadIO m) => ByteString -> ChunkifyT m ByteString
-atLeastBlockSizeOrEnd pfx = go (BS.byteString pfx) (BS.length pfx)
+atLeastBlockSizeOrEnd :: (MonadIO m) => Int -> ByteString -> ChunkifyT m ByteString
+atLeastBlockSizeOrEnd target pfx = go (BS.byteString pfx) (BS.length pfx)
   where go builder !len = do
-          target <- pstBlockSizeI <$> ask
           if target <= len
             then return $ BSL.toStrict $ BS.toLazyByteString builder
             else await >>= \case
@@ -64,10 +63,10 @@ awaitNonEmpty = await >>= \case
   Nothing -> return Nothing
 
 patchComputer :: (MonadIO m) => ParsedST -> Conduit ByteString m Chunk
-patchComputer pst = runReaderC pst $ evalStateC sbEmpty $ go
+patchComputer pst = evalStateC sbEmpty $ go
   where go = do
           liftIO $ putStrLn "Go!"
-          initBS <- atLeastBlockSizeOrEnd ""
+          initBS <- atLeastBlockSizeOrEnd blockSizeI ""
           liftIO $ putStrLn "No really!"
           fromChunk initBS
           yieldData
@@ -84,7 +83,7 @@ patchComputer pst = runReaderC pst $ evalStateC sbEmpty $ go
         loop wh q = do
           -- DQ.validate "loop 1" q
           -- Is there a block at the current position in the queue?
-          locateBlock wh (hashComputer $ DQ.hashBlock q) >>= \case
+          case findBlock pst wh (hashComputer $ DQ.hashBlock q) of
             Just b -> do
               -- Yes; add the data we've skipped, send the block ID
               -- itself, and then start over.
@@ -94,15 +93,15 @@ patchComputer pst = runReaderC pst $ evalStateC sbEmpty $ go
               -- of the queue; if that happens, it's data).
               attemptSlide wh q
         blockFound q b = do
-          addData $ DQ.beforeBlock q
+          addData blockSizeI $ DQ.beforeBlock q
           yieldBlock b
-          nextBS <- atLeastBlockSizeOrEnd $ DQ.afterBlock q
+          nextBS <- atLeastBlockSizeOrEnd blockSizeI $ DQ.afterBlock q
           fromChunk nextBS
         attemptSlide wh q =
           case DQ.slide q of
             Just (dropped, q') -> do
               -- DQ.validate "loop 2" q'
-              mapM_ addData dropped
+              mapM_ (addData blockSizeI) dropped
               let wh' = WH.roll wh (DQ.firstByteOfBlock q) (DQ.lastByteOfBlock q')
               loop wh' q'
             Nothing ->
@@ -116,7 +115,7 @@ patchComputer pst = runReaderC pst $ evalStateC sbEmpty $ go
               -- if so, send it as data.
               let (dropped, q') = DQ.addBlock q nextBlock
               -- DQ.validate "loop 3" q'
-              mapM_ addData dropped
+              mapM_ (addData blockSizeI) dropped
               let wh' = WH.roll wh (DQ.firstByteOfBlock q) (DQ.lastByteOfBlock q')
               loop wh' q'
             Nothing ->
@@ -128,17 +127,17 @@ patchComputer pst = runReaderC pst $ evalStateC sbEmpty $ go
           case DQ.slideOff q of
             (dropped, Just q') -> do
               -- DQ.validate "finish" q'
-              mapM_ addData dropped
+              mapM_ (addData blockSizeI) dropped
               let wh' = WH.roll wh (DQ.firstByteOfBlock q) 0
-              locateBlock wh' (hashComputer $ DQ.hashBlock q') >>= \case
+              case findBlock pst wh' (hashComputer $ DQ.hashBlock q') of
                 Just b -> do
-                  addData $ DQ.beforeBlock q'
+                  addData blockSizeI $ DQ.beforeBlock q'
                   yieldBlock b
                 Nothing ->
                   finish wh' q'
             -- Done!
             (dropped, Nothing) -> do
-              mapM_ addData dropped
+              mapM_ (addData blockSizeI) dropped
 
 yieldBlock :: (MonadIO m) => Word32 -> ChunkifyT m ()
 yieldBlock i = do
@@ -164,9 +163,8 @@ time label op = do
 timez :: (MonadIO m) => String -> m a -> m a
 timez _ op = op
 
-addData :: (MonadIO m) => ByteString -> ChunkifyT m ()
-addData bs = do
-  blockSize <- pstBlockSizeI <$> ask
+addData :: (MonadIO m) => Int ->ByteString -> ChunkifyT m ()
+addData blockSize bs = do
   SizedBuilder pendingL pendingS <- get
   let newSize = pendingS + BS.length bs
       newList = DL.snoc pendingL bs
@@ -180,8 +178,3 @@ addData bs = do
                  then put $ sizedByteString $ BSL.toStrict remaining
                  else loop remaining
          in loop $ BSL.fromChunks $ DL.toList newList
-
-locateBlock :: (MonadIO m) => WH.WeakHash -> ByteString -> ChunkifyT m (Maybe Word32)
-locateBlock wh bs = do
-  pst <- ask
-  return $ findBlock pst wh bs
