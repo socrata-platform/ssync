@@ -103,6 +103,7 @@ slide (PolyChunk bs1 hd q bs2 tl) | atEnd' bs2 tl =
                                           Just (Just bs1, SingleChunk bs2 0 (tl+1))
                                   | otherwise =
                                       Just (Nothing, PolyChunk bs1 (hd+1) q bs2 (tl+1))
+{-# INLINE slide #-}
 
 -- | Slide only the head of the block.
 slideOff :: DataQueue -> (Maybe ByteString, Maybe DataQueue)
@@ -116,6 +117,7 @@ slideOff (PolyChunk bs1 hd q bs2 tl) | atEnd' bs1 hd =
                                              (Just bs1, Just $ SingleChunk bs2 0 tl)
                                      | otherwise =
                                          (Nothing, Just $ PolyChunk bs1 (hd+1) q bs2 tl)
+{-# INLINE slideOff #-}
 
 -- | Add a block, sliding too.  Behavior is undefined if not 'atEnd'
 addBlock :: DataQueue -> ByteString -> (Maybe ByteString, DataQueue)
@@ -135,6 +137,7 @@ addBlock (PolyChunk bs1 hd q bs2 tl) bs3 | atEnd' bs2 tl =
                                              else (Nothing, PolyChunk bs1 (hd+1) (enq q bs2) bs3 0)
                                          | otherwise =
                                              error "Not at end of block"
+{-# INLINE addBlock #-}
 
 hashBlock :: (Monad m) => DataQueue -> HashT m ByteString
 hashBlock (SingleChunk bs hd tl) = do
