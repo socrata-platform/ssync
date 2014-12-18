@@ -223,7 +223,7 @@ strongHashComputer pst op = withHashM (pstStrongAlg pst) op
 findBlock :: ParsedST -> WH.WeakHash -> ByteString -> Maybe Word32
 findBlock pst@ParsedST{..} wh strongHash =
   let whv = WH.value wh
-      h16 = hash16 whv
+      h16 = fromIntegral $ WH.value16 wh
       potentialsListIdx = h16 `shiftL` 1
       start = pstWeakHashLookup PV.! potentialsListIdx
       end = pstWeakHashLookup PV.! (potentialsListIdx + 1)
@@ -244,9 +244,9 @@ findFirstWeakEntry pst@ParsedST{..} start end target = go start end
           then linearProbe pst p e target
           else let m = fromIntegral $ ((fromIntegral p :: Word64) + fromIntegral e) `shiftR` 1
                    h = bsWeakHash $ pstBlocks V.! m
-               in if | h < target -> findFirstWeakEntry pst (m+1) e target
-                     | h > target -> findFirstWeakEntry pst p m target
-                     | otherwise -> findFirstWeakEntry pst p (m+1) target -- found one, but it might not be the _first_ one
+               in if | h < target -> go (m+1) e
+                     | h > target -> go p m
+                     | otherwise -> go p (m+1) -- found one, but it might not be the _first_ one
 
 linearProbe :: ParsedST -> Int -> Int -> Word32 -> Int
 linearProbe ParsedST{..} start end target = go start

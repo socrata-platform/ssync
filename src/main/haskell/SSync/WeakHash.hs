@@ -3,6 +3,7 @@ module SSync.WeakHash (
   WeakHash
 , init
 , value
+, value16
 , forBlock
 , roll
 ) where
@@ -24,6 +25,9 @@ init blockSize = WeakHash blockSize 0 0
 
 value :: WeakHash -> Word32
 value WeakHash{..} = _whA + (_whB `shiftL` 16)
+
+value16 :: WeakHash -> Word32
+value16 WeakHash{..} = _whA `xor` _whB
 
 -- | Computes the checksum of the block at the start of the
 -- 'ByteString'.  To check a block somewhere other than the start,
