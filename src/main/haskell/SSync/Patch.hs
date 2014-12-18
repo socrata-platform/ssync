@@ -93,24 +93,29 @@ patchComputer pst = evalStateC sbEmpty $ go
           fromChunk nextBS
         attemptSlide wh q =
           case DQ.slide q of
-            Just (dropped, q') -> do
+            Just (dropped, q') ->
               -- DQ.validate "loop 2" q'
-              mapM_ (addData blockSizeI) dropped
               let wh' = WH.roll wh (DQ.firstByteOfBlock q) (DQ.lastByteOfBlock q')
-              loop wh' q'
+              in case dropped of
+                Just bs ->
+                  addData blockSizeI bs >> loop wh' q'
+                Nothing ->
+                  loop wh' q'
             Nothing ->
               -- can't even do that; we need more from upstream
               fetchMore wh q
         fetchMore wh q = do
           awaitNonEmpty >>= \case
-            Just nextBlock -> do
+            Just nextBlock ->
               -- ok good.  By adding that block we might drop one from the queue;
               -- if so, send it as data.
               let (dropped, q') = DQ.addBlock q nextBlock
-              -- DQ.validate "loop 3" q'
-              mapM_ (addData blockSizeI) dropped
-              let wh' = WH.roll wh (DQ.firstByteOfBlock q) (DQ.lastByteOfBlock q')
-              loop wh' q'
+                  wh' = WH.roll wh (DQ.firstByteOfBlock q) (DQ.lastByteOfBlock q')
+              in case dropped of
+                Just bs ->
+                  addData blockSizeI bs >> loop wh' q'
+                Nothing ->
+                  loop wh' q'
             Nothing ->
               -- Nothing!  Ok, we're in the home stretch now.
               finish wh q
