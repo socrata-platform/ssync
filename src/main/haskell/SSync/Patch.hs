@@ -6,7 +6,6 @@ module SSync.Patch where
 import qualified Data.DList as DL
 import Prelude hiding (mapM_)
 import Data.Foldable (mapM_)
-import Control.Applicative
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
@@ -15,12 +14,9 @@ import Conduit
 import Data.Word
 import Data.Monoid
 import Control.Monad.State.Strict (StateT)
-import Control.Monad.Reader (ReaderT)
-import Control.Monad.Reader.Class (ask)
 import Control.Monad.State.Strict (get)
 import Control.Monad (unless)
 import Control.Monad.State.Strict (put)
-import Data.Time
 
 import SSync.SignatureTable
 import qualified SSync.WeakHash as WH
@@ -47,7 +43,7 @@ builderLength (SizedBuilder _ l) = l
 builder :: SizedBuilder -> (DL.DList ByteString)
 builder (SizedBuilder b _) = b
 
-atLeastBlockSizeOrEnd :: (MonadIO m) => Int -> ByteString -> ChunkifyT m ByteString
+atLeastBlockSizeOrEnd :: (Monad m) => Int -> ByteString -> ChunkifyT m ByteString
 atLeastBlockSizeOrEnd target pfx = go (BS.byteString pfx) (BS.length pfx)
   where go builder !len = do
           if target <= len
@@ -62,12 +58,10 @@ awaitNonEmpty = await >>= \case
           | otherwise -> return $ Just bs
   Nothing -> return Nothing
 
-patchComputer :: (MonadIO m) => ParsedST -> Conduit ByteString m Chunk
+patchComputer :: (Monad m) => ParsedST -> Conduit ByteString m Chunk
 patchComputer pst = evalStateC sbEmpty $ go
   where go = do
-          liftIO $ putStrLn "Go!"
           initBS <- atLeastBlockSizeOrEnd blockSizeI ""
-          liftIO $ putStrLn "No really!"
           fromChunk initBS
           yieldData
           yield End
@@ -108,7 +102,6 @@ patchComputer pst = evalStateC sbEmpty $ go
               -- can't even do that; we need more from upstream
               fetchMore wh q
         fetchMore wh q = do
-          liftIO $ putStrLn "Hello!"
           awaitNonEmpty >>= \case
             Just nextBlock -> do
               -- ok good.  By adding that block we might drop one from the queue;
@@ -139,31 +132,19 @@ patchComputer pst = evalStateC sbEmpty $ go
             (dropped, Nothing) -> do
               mapM_ (addData blockSizeI) dropped
 
-yieldBlock :: (MonadIO m) => Word32 -> ChunkifyT m ()
+yieldBlock :: (Monad m) => Word32 -> ChunkifyT m ()
 yieldBlock i = do
   yieldData
   yield $ Block i
 
-yieldData :: (MonadIO m) => ChunkifyT m ()
+yieldData :: (Monad m) => ChunkifyT m ()
 yieldData = do
   SizedBuilder pendingL pendingS <- get
   unless (pendingS == 0) $ do
     yield $ Data $ BSL.fromChunks $ DL.toList pendingL
     put sbEmpty
 
-time :: (MonadIO m) => String -> m a -> m a
-time label op = do
-  start <- liftIO getCurrentTime
-  res <- op
-  end <- liftIO getCurrentTime
-  let diff = diffUTCTime end start
-  liftIO $ putStrLn $ label ++ " : " ++ show diff
-  return res
-
-timez :: (MonadIO m) => String -> m a -> m a
-timez _ op = op
-
-addData :: (MonadIO m) => Int ->ByteString -> ChunkifyT m ()
+addData :: (Monad m) => Int ->ByteString -> ChunkifyT m ()
 addData blockSize bs = do
   SizedBuilder pendingL pendingS <- get
   let newSize = pendingS + BS.length bs
