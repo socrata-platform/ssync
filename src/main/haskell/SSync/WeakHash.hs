@@ -16,18 +16,20 @@ import Data.Word
 import Data.Bits
 
 data WeakHash = WeakHash { _whBlockSize :: {-# UNPACK #-} !Word32
-                         , _whA :: {-# UNPACK #-} !Word32
-                         , _whB :: {-# UNPACK #-} !Word32
+                         , _wh :: {-# UNPACK #-} !Word32
+                         -- , _whB :: {-# UNPACK #-} !Word32
                          } deriving (Show)
 
 init :: Word32 -> WeakHash
-init blockSize = WeakHash blockSize 0 0
+init blockSize = WeakHash blockSize 0
 
 value :: WeakHash -> Word32
-value WeakHash{..} = _whA + (_whB `shiftL` 16)
+value WeakHash{..} = _wh --A + (_whB `shiftL` 16)
+{-# INLINE value #-}
 
 value16 :: WeakHash -> Word32
-value16 WeakHash{..} = _whA `xor` _whB
+value16 WeakHash{..} = (_wh `xor` (_wh `shiftR` 16)) .&. 0xffff
+{-# INLINE value16 #-}
 
 -- | Computes the checksum of the block at the start of the
 -- 'ByteString'.  To check a block somewhere other than the start,
@@ -36,7 +38,7 @@ forBlock :: WeakHash -> ByteString -> WeakHash
 forBlock WeakHash{_whBlockSize} bs =
   let a = aSum _whBlockSize bs .&. 0xffff
       b = bSum _whBlockSize bs .&. 0xffff
-  in WeakHash{ _whA=a, _whB=b, .. }
+  in WeakHash{ _wh = a + (b `shiftL` 16), .. }
 
 aSum :: Word32 -> ByteString -> Word32
 aSum blockSize bs = go 0 0
@@ -53,6 +55,8 @@ bSum blockSize bs = go 0 0
 
 roll :: WeakHash -> Word8 -> Word8 -> WeakHash
 roll WeakHash{..} oldByte newByte =
-  let a = (_whA - fromIntegral oldByte + fromIntegral newByte) .&. 0xffff
-      b = (_whB - _whBlockSize * fromIntegral oldByte + a) .&. 0xffff
-  in WeakHash { _whA = a, _whB = b, .. }
+  let ob = fromIntegral oldByte
+      a = ((_wh .&. 0xffff) - ob + fromIntegral newByte) .&. 0xffff
+      b = ((_wh `shiftR` 16) - _whBlockSize * ob + a) .&. 0xffff
+  in WeakHash { _wh = a + (b `shiftL` 16), .. }
+{-# INLINE roll #-}
