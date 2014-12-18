@@ -213,6 +213,7 @@ signatureTableParser = do
 
 hash16 :: Word32 -> Int
 hash16 x = 0xffff .&. fromIntegral (x `xor` (x `shiftR` 16))
+{-# INLINE hash16 #-}
 
 strongHashComputer :: (Monad m) => ParsedST -> (HashT m ByteString) -> m ByteString
 strongHashComputer pst op = withHashM (pstStrongAlg pst) op
@@ -223,7 +224,7 @@ strongHashComputer pst op = withHashM (pstStrongAlg pst) op
 findBlock :: ParsedST -> WH.WeakHash -> ByteString -> Maybe Word32
 findBlock pst@ParsedST{..} wh strongHash =
   let whv = WH.value wh
-      h16 = fromIntegral $ WH.value16 wh
+      h16 = hash16 whv
       potentialsListIdx = h16 `shiftL` 1
       start = pstWeakHashLookup PV.! potentialsListIdx
       end = pstWeakHashLookup PV.! (potentialsListIdx + 1)
@@ -232,7 +233,8 @@ findBlock pst@ParsedST{..} wh strongHash =
      else let p = findFirstWeakEntry pst start end whv
           in if p == -1
              then Nothing
-             else bsEntry `fmap` findStrongHashMatch pst p end strongHash whv
+             else findStrongHashMatch pst p end strongHash whv
+{-# INLINE findBlock #-}
 
 linearProbeThreshold :: Int
 linearProbeThreshold = 8
@@ -254,12 +256,12 @@ linearProbe ParsedST{..} start end target = go start
              | bsWeakHash (pstBlocks V.! p) == target = p
              | otherwise = go (p+1)
 
-findStrongHashMatch :: ParsedST -> Int -> Int -> ByteString -> Word32 -> Maybe BlockSpec
+findStrongHashMatch :: ParsedST -> Int -> Int -> ByteString -> Word32 -> Maybe Word32
 findStrongHashMatch ParsedST{..} start end target weakTarget = go start
   where go p =
           if p == end
           then Nothing
           else let block = pstBlocks V.! p
                in if | bsWeakHash block /= weakTarget -> Nothing
-                     | bsStrongHash block == target -> Just block
+                     | bsStrongHash block == target -> Just $ bsEntry block
                      | otherwise -> go (p+1)
