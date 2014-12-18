@@ -93,9 +93,9 @@ patchComputer pst = evalStateC sbEmpty $ go
           fromChunk nextBS
         attemptSlide wh q =
           case DQ.slide q of
-            Just (dropped, q') ->
+            Just (dropped, !q') ->
               -- DQ.validate "loop 2" q'
-              let wh' = WH.roll wh (DQ.firstByteOfBlock q) (DQ.lastByteOfBlock q')
+              let !wh' = WH.roll wh (DQ.firstByteOfBlock q) (DQ.lastByteOfBlock q')
               in case dropped of
                 Just bs ->
                   addData blockSizeI bs >> loop wh' q'
@@ -109,8 +109,8 @@ patchComputer pst = evalStateC sbEmpty $ go
             Just nextBlock ->
               -- ok good.  By adding that block we might drop one from the queue;
               -- if so, send it as data.
-              let (dropped, q') = DQ.addBlock q nextBlock
-                  wh' = WH.roll wh (DQ.firstByteOfBlock q) (DQ.lastByteOfBlock q')
+              let (dropped, !q') = DQ.addBlock q nextBlock
+                  !wh' = WH.roll wh (DQ.firstByteOfBlock q) (DQ.lastByteOfBlock q')
               in case dropped of
                 Just bs ->
                   addData blockSizeI bs >> loop wh' q'
@@ -123,10 +123,10 @@ patchComputer pst = evalStateC sbEmpty $ go
           -- sliding just failed, so let's slide off.  Again, this can
           -- cause a block to be dropped.
           case DQ.slideOff q of
-            (dropped, Just q') -> do
+            (dropped, Just !q') -> do
               -- DQ.validate "finish" q'
               mapM_ (addData blockSizeI) dropped
-              let wh' = WH.roll wh (DQ.firstByteOfBlock q) 0
+              let !wh' = WH.roll wh (DQ.firstByteOfBlock q) 0
               case findBlock pst wh' (hashComputer $ DQ.hashBlock q') of
                 Just b -> do
                   addData blockSizeI $ DQ.beforeBlock q'
