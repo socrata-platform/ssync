@@ -4,3 +4,7 @@
 /.idea/
 /.idea_modules/
 /credentials.sbt
+/.cabal-sandbox
+/cabal.sandbox.config
+/TAGS
+/dist
