@@ -37,6 +37,7 @@ executable ssync
                      , transformers
                      , vector >= 0.10.12.2 && <0.11
                      , vector-algorithms >= 0.6.0.3 && < 0.7
+                     , Crypto == 4.2.5.1
   hs-source-dirs:      src/main/haskell
   default-language:    Haskell2010
   ghc-options: -O -Wall
