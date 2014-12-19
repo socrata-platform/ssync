@@ -52,20 +52,24 @@ data DataQueue = SingleChunk !ByteString !Int !Int
 -- We'll always initially populate in single-chunk mode.  This incurs
 -- a little copying, but not too much.
 create :: ByteString -> Int -> Int -> DataQueue
-create bs a b = SingleChunk bs a b
+create bs a b
+  | BS.null bs = error "create: empty bytestring"
+  | a < 0 || a >= BS.length bs = error "create: first position out of range"
+  | b < a || b >= BS.length bs = error "create: second position out of range"
+  | otherwise = SingleChunk bs a b
 
 validate :: (Monad m) => String -> DataQueue -> m ()
-validate label (SingleChunk bs hd tl) =
-  if | hd > tl -> error $ label ++ ": single: hd > tl"
-     | hd < 0 -> error $ label ++ ": single: hd < 0"
-     | tl >= BS.length bs -> error $ label ++ ": single: tl > len"
-     | otherwise -> return ()
-validate label (PolyChunk bs1 hd _ bs2 tl) =
-  if | hd < 0 -> error $ label ++ ": poly: hd < 0"
-     | hd >= BS.length bs1 -> error $ label ++ ": poly: hd > len"
-     | tl < 0 -> error $ label ++ ": poly: tl < 0"
-     | tl >= BS.length bs2 -> error $ label ++ ": poly: tl > len"
-     | otherwise -> return ()
+validate label (SingleChunk bs hd tl)
+  | hd > tl = error $ label ++ ": single: hd > tl"
+  | hd < 0 = error $ label ++ ": single: hd < 0"
+  | tl >= BS.length bs = error $ label ++ ": single: tl > len"
+  | otherwise = return ()
+validate label (PolyChunk bs1 hd _ bs2 tl)
+  | hd < 0 = error $ label ++ ": poly: hd < 0"
+  | hd >= BS.length bs1 = error $ label ++ ": poly: hd > len"
+  | tl < 0 = error $ label ++ ": poly: tl < 0"
+  | tl >= BS.length bs2 = error $ label ++ ": poly: tl > len"
+  | otherwise = return ()
 
 firstByteOfBlock :: DataQueue -> Word8
 firstByteOfBlock (SingleChunk bs hd _) = BS.index bs hd
