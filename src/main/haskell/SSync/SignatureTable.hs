@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, ScopedTypeVariables, DeriveDataTypeable, BangPatterns, RecordWildCards, NamedFieldPuns, MultiWayIf #-}
+{-# LANGUAGE CPP, RankNTypes, ScopedTypeVariables, DeriveDataTypeable, BangPatterns, RecordWildCards, NamedFieldPuns, MultiWayIf #-}
 
 module SSync.SignatureTable (
   ParsedST
@@ -14,12 +14,16 @@ module SSync.SignatureTable (
 import SSync.Hash
 import qualified SSync.WeakHash as WH
 
-import qualified Debug.Trace as DT
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Algorithms.Intro as MV
+#ifdef STUPID_VECT
+import qualified Data.Vector as PV
+import qualified Data.Vector.Mutable as MPV
+#else
 import qualified Data.Vector.Primitive as PV
 import qualified Data.Vector.Primitive.Mutable as MPV
+#endif
 import Data.Foldable
 import Data.Bits
 import Control.Monad.Trans
@@ -29,15 +33,18 @@ import Data.Attoparsec.ByteString (Parser)
 import qualified Data.Attoparsec.ByteString as AP
 import qualified Data.ByteString as BS
 import Data.ByteString (ByteString)
-import Data.Word (Word8, Word16, Word32, Word64)
+import Data.Word (Word8, Word32, Word64)
 import Control.Monad (unless, when)
 import Data.Text.Encoding (decodeUtf8)
 import Data.Text (Text)
 import Control.Monad.ST
 
+#ifdef TRACING
+import qualified Debug.Trace as DT
 
 t :: (Show a) => String -> a -> a
 t label x = DT.trace (label ++ " : " ++ show x) x
+#endif
 
 shortStringNoCS :: Parser Text
 shortStringNoCS = do

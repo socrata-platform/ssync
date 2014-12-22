@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, MultiWayIf #-}
+{-# LANGUAGE CPP, RankNTypes, MultiWayIf #-}
 
 module SSync.DataQueue (
   DataQueue
@@ -39,10 +39,13 @@ import qualified Data.ByteString as BS
 import SSync.SimpleQueue
 import SSync.Hash
 import Control.Monad (forM_)
+
+#ifdef TRACING
 import qualified Debug.Trace as DT
 
 t :: (Show a) => String -> a -> a
 t label x = DT.trace (label ++ " : " ++ show x) x
+#endif
 
 -- None of these bytestrings may be empty!
 data DataQueue = SingleChunk !ByteString !Int !Int
