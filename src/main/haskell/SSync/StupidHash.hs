@@ -9,12 +9,13 @@ module SSync.StupidHash (
 , NoSuchHashAlgorithm(..)
 ) where
 
-import qualified Data.Digest.MD5 as MD5
+import qualified Data.Digest.Pure.MD5 as MD5 -- pureMD5 is 10x faster than Crypto's MD5
 import qualified Data.Digest.SHA1 as SHA1
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.ByteString (ByteString)
 import Control.Monad.State.Strict
+import Data.Serialize (encode)
 
 import Control.Exception
 import Data.Typeable
@@ -27,7 +28,7 @@ data NoSuchHashAlgorithm = NoSuchHashAlgorithm Text deriving (Show, Typeable)
 
 instance Exception NoSuchHashAlgorithm
 
-type S = ([Word8] -> ByteString, (DL.DList ByteString))
+type S = ([ByteString] -> ByteString, (DL.DList ByteString))
 
 type HashT m = StateT S m
 
@@ -45,7 +46,7 @@ addBytes bs (f, dl) = (f, DL.snoc dl bs)
 digest :: (Monad m) => HashT m BS.ByteString
 digest = do
   (f, bytes') <- get
-  let bytes = BSL.unpack $ BSL.fromChunks $ DL.toList bytes'
+  let bytes = DL.toList bytes'
   return $ f bytes
 
 -- | Returns the size of the current hash's digest, in bytes.  Note:
@@ -55,9 +56,9 @@ digestSize = do
   d <- digest
   return $ BS.length d
 
-hasher :: Text -> [Word8] -> ByteString
-hasher "MD5" = BS.pack . MD5.hash
-hasher "SHA1" = shaRes . SHA1.hash
+hasher :: Text -> [ByteString] -> ByteString
+hasher "MD5" = encode . MD5.md5 . BSL.fromChunks
+hasher "SHA1" = shaRes . SHA1.hash . concatMap BS.unpack
 hasher other = throw $ NoSuchHashAlgorithm other
 
 shaRes :: SHA1.Word160 -> ByteString

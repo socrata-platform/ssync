@@ -39,6 +39,8 @@ executable ssync
   if impl(ghcjs)
      cpp-options: -DSTUPID_HASH -DSTUPID_VECT
      build-depends: Crypto == 4.2.5.1
+                  , pureMD5 == 2.1.2.1
+                  , cereal
   if !impl(ghcjs)
      build-depends: cryptohash >=0.11.6 && <0.12
   ghc-prof-options: -fprof-auto "-with-rtsopts=-p -s -h -i0.1"
