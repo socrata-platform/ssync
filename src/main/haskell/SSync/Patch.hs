@@ -6,7 +6,6 @@ module SSync.Patch where
 import qualified Data.DList as DL
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Conduit
 import Data.Word
@@ -37,13 +36,13 @@ builder :: SizedBuilder -> (DL.DList ByteString)
 builder (SizedBuilder b _) = b
 
 atLeastBlockSizeOrEnd :: (Monad m) => Int -> ByteString -> ConduitM ByteString a m ByteString
-atLeastBlockSizeOrEnd target pfx = go (BS.byteString pfx) (BS.length pfx)
+atLeastBlockSizeOrEnd target pfx = go (DL.singleton pfx) (BS.length pfx)
   where go sb !len =
           if target <= len
-            then return $ BSL.toStrict $ BS.toLazyByteString sb
+            then return $ mconcat $ DL.toList sb
             else await >>= \case
-              Nothing -> return $ BSL.toStrict $ BS.toLazyByteString sb
-              Just bs -> go (sb <> BS.byteString bs) (len + BS.length bs)
+              Nothing -> return $ mconcat $ DL.toList sb
+              Just bs -> go (DL.snoc sb bs) (len + BS.length bs)
 
 awaitNonEmpty :: (Monad m) => Consumer ByteString m (Maybe ByteString)
 awaitNonEmpty = await >>= \case
