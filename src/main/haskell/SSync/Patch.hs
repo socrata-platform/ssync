@@ -1,7 +1,7 @@
 {-# LANGUAGE RankNTypes, GADTs, BangPatterns #-}
 {-# LANGUAGE ScopedTypeVariables, LambdaCase, NamedFieldPuns, OverloadedStrings #-}
 
-module SSync.Patch where
+module SSync.Patch (patchComputer, Chunk(..)) where
 
 import qualified Data.DList as DL
 import Data.ByteString (ByteString)
@@ -13,7 +13,7 @@ import Data.Monoid
 import Control.Monad.Identity
 
 import SSync.SignatureTable
-import qualified SSync.WeakHash as WH
+import qualified SSync.RollingChecksum as RC
 import qualified SSync.DataQueue as DQ
 import SSync.Hash (HashT)
 
@@ -28,12 +28,6 @@ sbEmpty = SizedBuilder DL.empty 0
 
 sizedByteString :: ByteString -> SizedBuilder
 sizedByteString bs = SizedBuilder (DL.singleton bs) (BS.length bs)
-
-builderLength :: SizedBuilder -> Int
-builderLength (SizedBuilder _ l) = l
-
-builder :: SizedBuilder -> (DL.DList ByteString)
-builder (SizedBuilder b _) = b
 
 atLeastBlockSizeOrEnd :: (Monad m) => Int -> ByteString -> ConduitM ByteString a m ByteString
 atLeastBlockSizeOrEnd target pfx = go (DL.singleton pfx) (BS.length pfx)
@@ -62,16 +56,16 @@ patchComputer pst = go
           then return sb
           else
             let initQ = DQ.create initBS 0 (min blockSizeI (BS.length initBS) - 1)
-                wh0 = WH.forBlock (WH.init blockSize) initBS
-            in loop wh0 initQ sb
+                rc0 = RC.forBlock (RC.init blockSize) initBS
+            in loop rc0 initQ sb
         blockSize = pstBlockSize pst
         blockSizeI = pstBlockSizeI pst
         hashComputer :: HashT Identity ByteString -> ByteString
         hashComputer = runIdentity . strongHashComputer pst
-        loop wh q sb =
+        loop rc q sb =
           -- DQ.validate "loop 1" q
           -- Is there a block at the current position in the queue?
-          case findBlock pst wh (hashComputer $ DQ.hashBlock q) of
+          case findBlock pst rc (hashComputer $ DQ.hashBlock q) of
             Just b -> do
               -- Yes; add the data we've skipped, send the block ID
               -- itself, and then start over.
@@ -79,41 +73,41 @@ patchComputer pst = go
             Nothing -> do
               -- no; move forward 1 byte (which might entail dropping a block from the front
               -- of the queue; if that happens, it's data).
-              attemptSlide wh q sb
+              attemptSlide rc q sb
         blockFound q b sb = do
           sb' <- addData blockSizeI (DQ.beforeBlock q) sb
           yieldBlock b sb'
           nextBS <- atLeastBlockSizeOrEnd blockSizeI $ DQ.afterBlock q
           fromChunk nextBS sbEmpty
-        attemptSlide wh q sb =
+        attemptSlide rc q sb =
           case DQ.slide q of
             Just (dropped, !q') ->
               -- DQ.validate "loop 2" q'
-              let !wh' = WH.roll wh (DQ.firstByteOfBlock q) (DQ.lastByteOfBlock q')
+              let !rc' = RC.roll rc (DQ.firstByteOfBlock q) (DQ.lastByteOfBlock q')
               in case dropped of
                 Just bs ->
-                  addData blockSizeI bs sb >>= loop wh' q'
+                  addData blockSizeI bs sb >>= loop rc' q'
                 Nothing ->
-                  loop wh' q' sb
+                  loop rc' q' sb
             Nothing ->
               -- can't even do that; we need more from upstream
-              fetchMore wh q sb
-        fetchMore wh q sb = do
+              fetchMore rc q sb
+        fetchMore rc q sb = do
           awaitNonEmpty >>= \case
             Just nextBlock ->
               -- ok good.  By adding that block we might drop one from the queue;
               -- if so, send it as data.
               let (dropped, !q') = DQ.addBlock q nextBlock
-                  !wh' = WH.roll wh (DQ.firstByteOfBlock q) (DQ.lastByteOfBlock q')
+                  !rc' = RC.roll rc (DQ.firstByteOfBlock q) (DQ.lastByteOfBlock q')
               in case dropped of
                 Just bs ->
-                  addData blockSizeI bs sb >>= loop wh' q'
+                  addData blockSizeI bs sb >>= loop rc' q'
                 Nothing ->
-                  loop wh' q' sb
+                  loop rc' q' sb
             Nothing ->
               -- Nothing!  Ok, we're in the home stretch now.
-              finish wh q sb
-        finish wh q sb = do
+              finish rc q sb
+        finish rc q sb = do
           -- sliding just failed, so let's slide off.  Again, this can
           -- cause a block to be dropped.
           case DQ.slideOff q of
@@ -124,14 +118,14 @@ patchComputer pst = go
                   addData blockSizeI bs sb
                 Nothing ->
                   return sb
-              let !wh' = WH.roll wh (DQ.firstByteOfBlock q) 0
-              case findBlock pst wh' (hashComputer $ DQ.hashBlock q') of
+              let !rc' = RC.roll rc (DQ.firstByteOfBlock q) 0
+              case findBlock pst rc' (hashComputer $ DQ.hashBlock q') of
                 Just b -> do
                   sb'' <- addData blockSizeI (DQ.beforeBlock q') sb'
                   yieldBlock b sb''
                   return sbEmpty
                 Nothing ->
-                  finish wh' q' sb'
+                  finish rc' q' sb'
             -- Done!
             (Just dropped, Nothing) -> do
               addData blockSizeI dropped sb

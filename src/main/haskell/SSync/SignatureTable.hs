@@ -12,7 +12,7 @@ module SSync.SignatureTable (
 ) where
 
 import SSync.Hash
-import qualified SSync.WeakHash as WH
+import qualified SSync.RollingChecksum as RC
 
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
@@ -112,7 +112,7 @@ maxSignatureBlockSize :: Word32
 maxSignatureBlockSize = 0xffff
 
 data BlockSpec = BlockSpec { bsEntry :: {-# UNPACK #-} !Word32
-                           , bsWeakHash :: {-# UNPACK #-} !Word32
+                           , bsChecksum :: {-# UNPACK #-} !Word32
                            , bsStrongHash :: !ByteString
                            } deriving (Show)
 
@@ -120,10 +120,10 @@ data ParsedST = ParsedST { pstBlockSize :: {-# UNPACK #-} !Word32 -- \ The same,
                          , pstBlockSizeI :: {-# UNPACK #-} !Int   -- / convenient to have one than the other
                          , pstStrongAlg :: !Text
                          , pstBlocks :: !(V.Vector BlockSpec)
-                           -- ^ BlockSpecs ordered by (weak16 weakhash, weakhash, entry)
-                         , pstWeakHashLookup :: !(PV.Vector Int)
+                           -- ^ BlockSpecs ordered by (weak16 checksum, checksum, entry)
+                         , pstChecksumLookup :: !(PV.Vector Int)
                            -- ^ pairs of indices into pstBlocks for
-                           -- each possible hash16(weakhash) value,
+                           -- each possible hash16(checksum) value,
                            -- indicating the start and end of the
                            -- range in 'pstBlocks'.
                          } deriving (Show)
@@ -134,14 +134,14 @@ smallify ParsedST{..} =
            , pstBlockSizeI
            , pstStrongAlg
            , pstBlocks = V.empty
-           , pstWeakHashLookup = PV.empty
+           , pstChecksumLookup = PV.empty
            }
 
 receiveBlock :: Int -> Word32 -> HashT Parser BlockSpec
 receiveBlock hashSize n = do
-  weak <- int4
+  check <- int4
   strong <- take_h hashSize
-  return $ BlockSpec n weak strong
+  return $ BlockSpec n check strong
 
 receiveBlocks :: Word32 -> Int -> (Seq.Seq BlockSpec) -> HashT Parser (Seq.Seq BlockSpec)
 receiveBlocks maxSigs hashSize !pfx = do
@@ -165,11 +165,11 @@ copyToVector xs = do
     MV.write v i (Seq.index xs i)
   return v
 
-weakHashes :: BlockSpec -> BlockSpec -> Ordering
-weakHashes (BlockSpec n1 wh1 _) (BlockSpec n2 wh2 _) = do
-  case compare (hash16 wh1) (hash16 wh2) of
+checksums :: BlockSpec -> BlockSpec -> Ordering
+checksums (BlockSpec n1 rc1 _) (BlockSpec n2 rc2 _) = do
+  case compare (hash16 rc1) (hash16 rc2) of
     EQ ->
-      case compare wh1 wh2 of
+      case compare rc1 rc2 of
         EQ -> compare n1 n2
         other -> other
     other ->
@@ -187,8 +187,8 @@ indexBlocks blocks =
              then scanFrom pos
              else return v
         scanFrom pos = do
-          let h16 = hash16 $ bsWeakHash $ blocks V.! pos
-              chunk = V.takeWhile (\b -> hash16 (bsWeakHash b) == h16) $ V.drop pos blocks
+          let h16 = hash16 $ bsChecksum $ blocks V.! pos
+              chunk = V.takeWhile (\b -> hash16 (bsChecksum b) == h16) $ V.drop pos blocks
               afterChunk = pos + V.length chunk
           MPV.write v (2 * fromIntegral h16) pos
           MPV.write v (1 + 2 * fromIntegral h16) afterChunk
@@ -209,7 +209,7 @@ signatureTableParser = do
     let blocksSorted = V.create $ do
           -- ok, we have a 'Seq BlockSpec' and we want a sorted 'MVector BlockSpec'
           v <- copyToVector blocksUnsorted
-          MV.sortBy weakHashes v
+          MV.sortBy checksums v
           return v
         blocksIndexed = indexBlocks blocksSorted
     d <- digest
@@ -228,19 +228,19 @@ strongHashComputer pst op = withHashM (pstStrongAlg pst) op
 -- | Finds the preexisting block corresponding to the block with the
 -- given weak and strong hashes.  Note: this does not evaluate the
 -- strong hash unless the weak hash matches.
-findBlock :: ParsedST -> WH.WeakHash -> ByteString -> Maybe Word32
-findBlock pst@ParsedST{..} wh strongHash =
-  let whv = WH.value wh
-      h16 = hash16 whv
+findBlock :: ParsedST -> RC.RollingChecksum -> ByteString -> Maybe Word32
+findBlock pst@ParsedST{..} rc strongHash =
+  let rcv = RC.value rc
+      h16 = hash16 rcv
       potentialsListIdx = h16 `shiftL` 1
-      start = pstWeakHashLookup PV.! potentialsListIdx
-      end = pstWeakHashLookup PV.! (potentialsListIdx + 1)
+      start = pstChecksumLookup PV.! potentialsListIdx
+      end = pstChecksumLookup PV.! (potentialsListIdx + 1)
   in if start == end
      then Nothing
-     else let p = findFirstWeakEntry pst start end whv
+     else let p = findFirstWeakEntry pst start end rcv
           in if p == -1
              then Nothing
-             else findStrongHashMatch pst p end strongHash whv
+             else findStrongHashMatch pst p end strongHash rcv
 {-# INLINE findBlock #-}
 
 linearProbeThreshold :: Int
@@ -252,7 +252,7 @@ findFirstWeakEntry pst@ParsedST{..} start end target = go start end
           if e - p < linearProbeThreshold
           then linearProbe pst p e target
           else let m = fromIntegral $ ((fromIntegral p :: Word64) + fromIntegral e) `shiftR` 1
-                   h = bsWeakHash $ pstBlocks V.! m
+                   h = bsChecksum $ pstBlocks V.! m
                in if | h < target -> go (m+1) e
                      | h > target -> go p m
                      | otherwise -> go p (m+1) -- found one, but it might not be the _first_ one
@@ -260,7 +260,7 @@ findFirstWeakEntry pst@ParsedST{..} start end target = go start end
 linearProbe :: ParsedST -> Int -> Int -> Word32 -> Int
 linearProbe ParsedST{..} start end target = go start
   where go p | p == end = -1
-             | bsWeakHash (pstBlocks V.! p) == target = p
+             | bsChecksum (pstBlocks V.! p) == target = p
              | otherwise = go (p+1)
 
 findStrongHashMatch :: ParsedST -> Int -> Int -> ByteString -> Word32 -> Maybe Word32
@@ -269,6 +269,6 @@ findStrongHashMatch ParsedST{..} start end target weakTarget = go start
           if p == end
           then Nothing
           else let block = pstBlocks V.! p
-               in if | bsWeakHash block /= weakTarget -> Nothing
+               in if | bsChecksum block /= weakTarget -> Nothing
                      | bsStrongHash block == target -> Just $ bsEntry block
                      | otherwise -> go (p+1)
