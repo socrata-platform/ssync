@@ -13,7 +13,6 @@ import Control.Concurrent.STM
 import qualified GHCJS.Types as T
 import qualified GHCJS.Foreign as F
 import qualified Data.Text as TXT
-import qualified Data.Text.Encoding as TXT
 import Data.Text (Text)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
