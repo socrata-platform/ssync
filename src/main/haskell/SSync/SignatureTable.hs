@@ -1,11 +1,11 @@
-{-# LANGUAGE CPP, RankNTypes, ScopedTypeVariables, DeriveDataTypeable, BangPatterns, RecordWildCards, NamedFieldPuns, MultiWayIf #-}
+{-# LANGUAGE CPP, RankNTypes, ScopedTypeVariables, DeriveDataTypeable, BangPatterns, RecordWildCards, NamedFieldPuns, MultiWayIf, LambdaCase #-}
 
 module SSync.SignatureTable (
-  ParsedST
+  SignatureTable
 , smallify
-, pstBlockSize
-, pstBlockSizeI
-, pstStrongAlg
+, stBlockSize
+, stBlockSizeI
+, stStrongAlg
 , signatureTableParser
 , findBlock
 , strongHashComputer
@@ -116,26 +116,27 @@ data BlockSpec = BlockSpec { bsEntry :: {-# UNPACK #-} !Word32
                            , bsStrongHash :: !ByteString
                            } deriving (Show)
 
-data ParsedST = ParsedST { pstBlockSize :: {-# UNPACK #-} !Word32 -- \ The same, but sometime's it's more
-                         , pstBlockSizeI :: {-# UNPACK #-} !Int   -- / convenient to have one than the other
-                         , pstStrongAlg :: !Text
-                         , pstBlocks :: !(V.Vector BlockSpec)
-                           -- ^ BlockSpecs ordered by (weak16 checksum, checksum, entry)
-                         , pstChecksumLookup :: !(PV.Vector Int)
-                           -- ^ pairs of indices into pstBlocks for
-                           -- each possible hash16(checksum) value,
-                           -- indicating the start and end of the
-                           -- range in 'pstBlocks'.
+data SignatureTable = ST { stBlockSize :: {-# UNPACK #-} !Word32 -- \ The same, but sometime's it's more
+                         , stBlockSizeI :: {-# UNPACK #-} !Int   -- / convenient to have one than the other
+                         , stStrongAlg :: !Text
+                         , stBlocks :: !(V.Vector BlockSpec)
+                         -- ^ BlockSpecs ordered by (weak16 checksum,
+                         -- checksum, entry)
+                         , stChecksumLookup :: !(PV.Vector Int)
+                         -- ^ pairs of indices into stBlocks for each
+                         -- possible hash16(checksum) value,
+                         -- indicating the start and end of the range
+                         -- in 'stBlocks'.
                          } deriving (Show)
 
-smallify :: ParsedST -> ParsedST
-smallify ParsedST{..} =
-  ParsedST { pstBlockSize
-           , pstBlockSizeI
-           , pstStrongAlg
-           , pstBlocks = V.empty
-           , pstChecksumLookup = PV.empty
-           }
+smallify :: SignatureTable -> SignatureTable
+smallify ST{..} =
+  ST { stBlockSize
+     , stBlockSizeI
+     , stStrongAlg
+     , stBlocks = V.empty
+     , stChecksumLookup = PV.empty
+     }
 
 receiveBlock :: Int -> Word32 -> HashT Parser BlockSpec
 receiveBlock hashSize n = do
@@ -195,10 +196,10 @@ indexBlocks blocks =
           loop afterChunk
     loop 0
 
-signatureTableParser :: Parser ParsedST
+signatureTableParser :: Parser SignatureTable
 signatureTableParser = do
   checksumAlg <- shortStringNoCS
-  (pst, d) <- withHashM checksumAlg $ do
+  (st, d) <- withHashM checksumAlg $ do
     blockSize <- varInt
     when (blockSize > maxBlockSize) $ fail "invalid block size"
     strongHashAlg <- shortString
@@ -213,62 +214,64 @@ signatureTableParser = do
           return v
         blocksIndexed = indexBlocks blocksSorted
     d <- digest
-    return (ParsedST blockSize (fromIntegral blockSize) strongHashAlg blocksSorted blocksIndexed, d)
+    return (ST blockSize (fromIntegral blockSize) strongHashAlg blocksSorted blocksIndexed, d)
   checksum <- bytesNoCS $ BS.length d
   unless (d == checksum) $ fail "checksum mismatch"
-  return pst
+  AP.peekWord8 >>= \case
+    Nothing -> return st
+    Just _ -> fail "Expected EOF"
 
 hash16 :: Word32 -> Int
 hash16 x = 0xffff .&. fromIntegral (x `xor` (x `shiftR` 16))
 {-# INLINE hash16 #-}
 
-strongHashComputer :: (Monad m) => ParsedST -> (HashT m ByteString) -> m ByteString
-strongHashComputer pst op = withHashM (pstStrongAlg pst) op
+strongHashComputer :: (Monad m) => SignatureTable -> (HashT m ByteString) -> m ByteString
+strongHashComputer st op = withHashM (stStrongAlg st) op
 
 -- | Finds the preexisting block corresponding to the block with the
 -- given weak and strong hashes.  Note: this does not evaluate the
 -- strong hash unless the weak hash matches.
-findBlock :: ParsedST -> RC.RollingChecksum -> ByteString -> Maybe Word32
-findBlock pst@ParsedST{..} rc strongHash =
+findBlock :: SignatureTable -> RC.RollingChecksum -> ByteString -> Maybe Word32
+findBlock st@ST{..} rc strongHash =
   let rcv = RC.value rc
       h16 = hash16 rcv
       potentialsListIdx = h16 `shiftL` 1
-      start = pstChecksumLookup PV.! potentialsListIdx
-      end = pstChecksumLookup PV.! (potentialsListIdx + 1)
+      start = stChecksumLookup PV.! potentialsListIdx
+      end = stChecksumLookup PV.! (potentialsListIdx + 1)
   in if start == end
      then Nothing
-     else let p = findFirstWeakEntry pst start end rcv
+     else let p = findFirstWeakEntry st start end rcv
           in if p == -1
              then Nothing
-             else findStrongHashMatch pst p end strongHash rcv
+             else findStrongHashMatch st p end strongHash rcv
 {-# INLINE findBlock #-}
 
 linearProbeThreshold :: Int
 linearProbeThreshold = 8
 
-findFirstWeakEntry :: ParsedST -> Int -> Int -> Word32 -> Int
-findFirstWeakEntry pst@ParsedST{..} start end target = go start end
+findFirstWeakEntry :: SignatureTable -> Int -> Int -> Word32 -> Int
+findFirstWeakEntry st@ST{..} start end target = go start end
   where go p e =
           if e - p < linearProbeThreshold
-          then linearProbe pst p e target
+          then linearProbe st p e target
           else let m = fromIntegral $ ((fromIntegral p :: Word64) + fromIntegral e) `shiftR` 1
-                   h = bsChecksum $ pstBlocks V.! m
+                   h = bsChecksum $ stBlocks V.! m
                in if | h < target -> go (m+1) e
                      | h > target -> go p m
                      | otherwise -> go p (m+1) -- found one, but it might not be the _first_ one
 
-linearProbe :: ParsedST -> Int -> Int -> Word32 -> Int
-linearProbe ParsedST{..} start end target = go start
+linearProbe :: SignatureTable -> Int -> Int -> Word32 -> Int
+linearProbe ST{..} start end target = go start
   where go p | p == end = -1
-             | bsChecksum (pstBlocks V.! p) == target = p
+             | bsChecksum (stBlocks V.! p) == target = p
              | otherwise = go (p+1)
 
-findStrongHashMatch :: ParsedST -> Int -> Int -> ByteString -> Word32 -> Maybe Word32
-findStrongHashMatch ParsedST{..} start end target weakTarget = go start
+findStrongHashMatch :: SignatureTable -> Int -> Int -> ByteString -> Word32 -> Maybe Word32
+findStrongHashMatch ST{..} start end target weakTarget = go start
   where go p =
           if p == end
           then Nothing
-          else let block = pstBlocks V.! p
+          else let block = stBlocks V.! p
                in if | bsChecksum block /= weakTarget -> Nothing
                      | bsStrongHash block == target -> Just $ bsEntry block
                      | otherwise -> go (p+1)

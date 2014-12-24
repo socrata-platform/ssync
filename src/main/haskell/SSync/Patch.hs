@@ -44,8 +44,8 @@ awaitNonEmpty = await >>= \case
           | otherwise -> return $ Just bs
   Nothing -> return Nothing
 
-patchComputer :: (Monad m) => ParsedST -> Conduit ByteString m Chunk
-patchComputer pst = go
+patchComputer :: (Monad m) => SignatureTable -> Conduit ByteString m Chunk
+patchComputer st = go
   where go = do
           initBS <- atLeastBlockSizeOrEnd blockSizeI ""
           sb <- fromChunk initBS sbEmpty
@@ -58,14 +58,14 @@ patchComputer pst = go
             let initQ = DQ.create initBS 0 (min blockSizeI (BS.length initBS) - 1)
                 rc0 = RC.forBlock (RC.init blockSize) initBS
             in loop rc0 initQ sb
-        blockSize = pstBlockSize pst
-        blockSizeI = pstBlockSizeI pst
+        blockSize = stBlockSize st
+        blockSizeI = stBlockSizeI st
         hashComputer :: HashT Identity ByteString -> ByteString
-        hashComputer = runIdentity . strongHashComputer pst
+        hashComputer = runIdentity . strongHashComputer st
         loop rc q sb =
           -- DQ.validate "loop 1" q
           -- Is there a block at the current position in the queue?
-          case findBlock pst rc (hashComputer $ DQ.hashBlock q) of
+          case findBlock st rc (hashComputer $ DQ.hashBlock q) of
             Just b -> do
               -- Yes; add the data we've skipped, send the block ID
               -- itself, and then start over.
@@ -119,7 +119,7 @@ patchComputer pst = go
                 Nothing ->
                   return sb
               let !rc' = RC.roll rc (DQ.firstByteOfBlock q) 0
-              case findBlock pst rc' (hashComputer $ DQ.hashBlock q') of
+              case findBlock st rc' (hashComputer $ DQ.hashBlock q') of
                 Just b -> do
                   sb'' <- addData blockSizeI (DQ.beforeBlock q') sb'
                   yieldBlock b sb''
