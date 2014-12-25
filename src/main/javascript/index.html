@@ -43,68 +43,72 @@
 
       var ssync = new SSync();
 
-      function AsyncBox(name) {
-        this.waitingForEmpty = [];
-        this.waitingForFull = [];
-        this.hasValue = false;
-        this.value = undefined;
-        this.closed = false;
+      function AsyncBox(name, size) {
+        if(!size) size = 1;
+        var self = this;
+        self.waitingForEmpty = [];
+        self.waitingForFull = [];
+        self.values = [];
+        self.closed = false;
 
-        this.put = function(v, continuation) {
-          if(this.closed) {
+        var putIntl = function(v, continuation, blocked) {
+          if(self.closed) {
             continuation({ok : false});
-          } if(this.hasValue) {
+          } else if(self.values.length >= size) {
             debuglog("PUT: blocking in " + name);
-            var self = this;
-            this.waitingForEmpty.push(function() {
+            self.waitingForEmpty.push(function() {
               debuglog("PUT: unblocked in " + name);
-              self.put(v, continuation);
+              putIntl(v, continuation, true);
             });
           } else {
-            this.hasValue = true;
-            this.value = v;
-            if(this.waitingForFull.length != 0) {
+            self.values.push(v);
+            if(self.waitingForFull.length != 0) {
               debuglog("PUT: unblocking a thread in " + name);
-              var waiterCont = this.waitingForFull.shift();
+              var waiterCont = self.waitingForFull.shift();
               waiterCont();
             }
             debuglog("PUT: successfully put into " + name);
-            continuation({ ok : true });
+            continuation({ ok : true, blocked : blocked });
           }
         }
 
-        this.take = function(continuation) {
-          if(this.closed) {
+        self.put = function(v, continuation) {
+          putIntl(v, continuation, false);
+        }
+
+        var takeIntl = function(continuation, blocked) {
+          if(self.closed) {
             continuation({ ok : false });
-          } if(this.hasValue) {
-            var result = this.value;
-            this.hasValue = false;
-            this.value = undefined;
-            if(this.waitingForEmpty.length != 0) {
+          } else if(self.values.length != 0) {
+            var result = self.values.shift();
+            if(self.waitingForEmpty.length != 0) {
               debuglog("take: unblocking a thread in " + name);
-              var waiterCont = this.waitingForEmpty.shift();
+              var waiterCont = self.waitingForEmpty.shift();
               waiterCont();
             }
             debuglog("take: successfully took from " + name);
-            continuation({ ok : true, result : result });
+            continuation({ ok : true, blocked : blocked, result : result });
           } else {
             debuglog("take: blocking in " + name);
-            var self = this;
-            this.waitingForFull.push(function() {
+            self.waitingForFull.push(function() {
               debuglog("take: unblocked in " + name);
-              self.take(continuation);
+              takeIntl(continuation, true);
             });
           }
         }
 
-        this.close = function() {
-          this.closed = true;
-          while(this.waitingForEmpty.length != 0) {
-            var waiterCont = this.waitingForEmpty.shift();
+        self.take = function(continuation) {
+          takeIntl(continuation, false);
+        }
+
+        self.close = function() {
+          self.closed = true;
+          while(self.waitingForEmpty.length != 0) {
+            var waiterCont = self.waitingForEmpty.shift();
             waiterCont();
           }
-          while(this.waitingForFull.length != 0) {
-            var waiterCont = this.waitingForFull.shift();
+          while(self.waitingForFull.length != 0) {
+            var waiterCont = self.waitingForFull.shift();
             waiterCont();
           }
         }
@@ -168,6 +172,7 @@
         return function(e) {
           debuglog("Received data from the file: " + e.target.result + " bytes");
           state.fromReader.put({done:false, bytes: e.target.result}, function(res) {
+            debuglog("putting bytes in fromReader blocked: " + res.blocked);
             if(res.ok) {
               readFile_readNextChunk(state);
             } else {
@@ -180,7 +185,7 @@
       function readFile_readNextChunk(state) {
         if(state.currentOffset >= state.endOffset) {
           state.fromReader.put({done:true}, function(res) {
-            // don't care
+            debuglog("putting done in fromReader blocked: " + res.blocked);
           });
           state.progress(state.endOffset, state.endOffset);
         } else {
@@ -193,13 +198,19 @@
 
       function readFile_awaitChunkFromFile(state) {
         return function(res) {
+          debuglog("take from fromReader blocked: " + res.blocked);
           if(res.ok) {
             debuglog("***********************");
             debuglog(res);
             if(res.result.done) {
               ssync.send({id: state.job, command: "DONE"});
             } else {
-              ssync.send({id: state.job, command: "DATA", bytes: new Uint8Array(res.result.bytes)});
+              state.backpressure.put(null, function(bpRes) {
+                debuglog("write was backpressured: " + bpRes.blocked);
+                state.backpressure.take(function() { // this should never block; we just put it in ourselves!
+                  ssync.send({id: state.job, command: "DATA", bytes: new Uint8Array(res.result.bytes)});
+                });
+              });
             }
             // do NOT take again; the CHUNKACCEPTED response will do it.
           } else {
@@ -213,16 +224,24 @@
           if(result.command == "CHUNKACCEPTED") {
             state.fromReader.take(readFile_awaitChunkFromFile(state));
           } else if(result.command == "CHUNK") {
-            state.fromWorker.put({ done: false, chunk : result.bytes }, function(res) {
-              if(res.ok) {
-                // ok good
-              } else {
-                ssync.kill(state.job);
-              }
+            state.backpressure.put(null, function(backpressureRes) { // taken by dataFromWorker
+              state.fromWorker.put({ done: false, chunk : result.bytes }, function(res) {
+                debuglog("putting chunk in fromWorker blocked: " + res.blocked);
+                if(res.ok) {
+                  // ok good
+                } else {
+                  state.backpressure.take(function() {
+                    ssync.kill(state.job);
+                  });
+                }
+              });
             });
           } else if(result.command == "COMPLETE") {
-            state.fromWorker.put({ done: true }, function(res) {
-              ssync.kill(state.job);
+            state.backpressure.put(null, function(backpressureRes) { // taken by dataFromWorker
+              state.fromWorker.put({ done: true }, function(res) {
+                debuglog("putting done in fromWorker blocked: " + res.blocked);
+                ssync.kill(state.job);
+              });
             });
           } else {
             debuglog("error: unexpected message from worker: " + result.command);
@@ -233,9 +252,12 @@
 
       function readFile_dataFromWorker(state) {
         return function(res) {
+          debuglog("take from fromWorker blocked: " + res.blocked);
           if(res.ok) {
             if(res.result.done) {
-              state.done(state.uploadedChunks, state.uploadedSize)
+              state.backpressure.take(function() {
+                state.done(state.uploadedChunks, state.uploadedSize)
+              });
             } else {
               // TODO: this needs to retry on errors
               var chunklen = res.result.chunk.length;
@@ -248,13 +270,16 @@
                 contentType: 'application/octet-stream',
                 headers : state.authHeaders
               }).done(function(response) {
-                state.uploadedChunks.push(response.blobId);
-                state.uploadedSize += chunklen;
-                state.fromWorker.take(readFile_dataFromWorker(state));
+                // TODO: this take needs to happen in all error cases too (after any retrying is done!)
+                state.backpressure.take(function() {
+                  state.uploadedChunks.push(response.blobId);
+                  state.uploadedSize += chunklen;
+                  state.fromWorker.take(readFile_dataFromWorker(state));
+                });
               })
             }
           } else {
-            stat("closed unexpectedly?");
+            ssync.kill(state.job);
           }
         }
       }
@@ -263,6 +288,7 @@
         ssync.kill(state.job);
         state.fromReader.close();
         state.fromWorker.close();
+        state.backpressure.close();
       }
 
       function readFile(job, file, progress, chunk, done, uploadUrl, authHeaders) {
@@ -278,7 +304,7 @@
           job: job,
           reader: new FileReader(),
           file: file,
-          chunkSize: 10240,
+          chunkSize: 10240, // size of each read from the file
           uploadUrl: uploadUrl,
           authHeaders: authHeaders,
 
@@ -295,7 +321,8 @@
 
           // async status tracking
           fromReader : new AsyncBox("reader"),
-          fromWorker : new AsyncBox("worker")
+          fromWorker : new AsyncBox("worker"),
+          backpressure : new AsyncBox("backpressure") // full when a message from the worker has not been fully handled
         };
         ssync.callbacks[job] = readFile_messageFromWorker(state);
         state.reader.onload = readFile_dataFromFile(state);
