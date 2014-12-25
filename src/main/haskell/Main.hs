@@ -187,7 +187,7 @@ varInt i = go i
 
 serializeChunk :: Chunk -> BSL.ByteString
 serializeChunk (Block i) = BS.toLazyByteString (BS.word8 0 <> varInt i)
-serializeChunk (Data d) = BSL.fromChunks (BS.singleton 1 : BSL.toChunks d)
+serializeChunk (Data d) = BS.toLazyByteString (BS.word8 1 <> varInt (fromIntegral $ BSL.length d) <> BS.lazyByteString d)
 serializeChunk End = BSL.singleton 255
 
 frame :: (Monad m) => Word32 -> Conduit BSL.ByteString m BSL.ByteString
