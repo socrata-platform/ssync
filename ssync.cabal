@@ -41,7 +41,7 @@ executable ssync
   default-language:    Haskell2010
   ghc-options: -O -Wall
   if impl(ghcjs)
-     cpp-options: -DSTUPID_HASH -DSTUPID_VECT
+     cpp-options: -DSTUPID_HASH -DSTUPID_VECT -DGHCJS_BROWSER
      build-depends: Crypto == 4.2.5.1
                   , pureMD5 == 2.1.2.1
                   , cereal
