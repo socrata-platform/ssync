@@ -152,7 +152,7 @@ function parseSig(targetSize, bs, oncomplete) {
     ssync.send({id: job, command: "NEW", size: targetSize});
 }
 
-function fakeSig(oncomplete) {
+function fakeSig(targetSize, oncomplete) {
     var job = ssync.idCtr++;
     debuglog("Creating job " + job);
     ssync.callbacks[job] = function(result) {
@@ -162,7 +162,7 @@ function fakeSig(oncomplete) {
             oncomplete({ok: false, error: result});
         }
     };
-    ssync.send({id: job, command: "NEWFAKESIG"});
+    ssync.send({id: job, command: "NEWFAKESIG", size: targetSize});
 }
 
 function msg(s) {
@@ -418,7 +418,7 @@ function go() {
 
             if(sigurl == null) {
                 msg("No signature available; using empty signature")
-                fakeSig(function(result) {
+                fakeSig(blockSize, function(result) {
                     if(result.ok) {
                         generatePatch(result.continuation);
                     } else {
