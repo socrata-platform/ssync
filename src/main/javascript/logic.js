@@ -375,7 +375,9 @@ function findSig(base, authHeaders, cont) {
 
 function go() {
     // $("#go").prop("disabled", true);
-    $("#output").empty();
+    $("#log").empty();
+    $("#status").empty();
+    $("#message").empty();
     var file = $("#input")[0].files[0];
     var ff = $("#fourfour").val();
     var datasyncBase = "/datasync"
