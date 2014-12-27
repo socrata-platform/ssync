@@ -6,6 +6,7 @@
 
 module Main (main) where
 
+import Control.Applicative
 import Control.Exception
 import Control.Concurrent hiding (yield)
 import Control.Concurrent.STM
@@ -80,6 +81,28 @@ reqDATA = "DATA"
 reqDATADONE = "DONE"
 reqRESPACCEPTED = "CHUNKACCEPTED"
 
+data TSBQueue a = TSBQueue Int (TVar Int) (a -> Int) (TQueue (a, Int))
+newTSBQueueIO :: Int -> (a -> Int) -> IO (TSBQueue a)
+newTSBQueueIO maxTotalSize sizer = do
+  underlying <- newTQueueIO
+  current <- newTVarIO 0
+  return $ TSBQueue maxTotalSize current sizer underlying
+
+writeTSBQueue :: TSBQueue a -> a -> STM ()
+writeTSBQueue (TSBQueue limit current sizer underlying) a = do
+  c <- readTVar current
+  let size = sizer a
+      new = c + size
+  unless (new <= limit) retry
+  writeTVar current new
+  writeTQueue underlying (a, size)
+
+readTSBQueue :: TSBQueue a -> STM a
+readTSBQueue (TSBQueue _ current _ underlying) = do
+  (res, size) <- readTQueue underlying
+  modifyTVar current (subtract size)
+  return res
+
 data JobHasSig = JobHasSig | JobHasNoSig
                deriving (Show)
 
@@ -107,13 +130,13 @@ type TaskMap = Map.Map JobId TaskInfo
 
 data TaskInfo = TaskInfo { taskJobId :: JobId
                          , taskTargetChunkSize :: Int
-                         , taskDataBox :: TMVar DataFeed
+                         , taskDataBox :: TSBQueue DataFeed
                          , taskResponseQueue :: TQueue ResponseFeed -- queue because it needs to never block
                          , taskThread :: ThreadId
                          , taskMap :: TVar TaskMap
                          }
 
-initialTaskInfo :: JobId -> Int -> TMVar DataFeed -> TQueue ResponseFeed -> ThreadId -> TVar TaskMap -> TaskInfo
+initialTaskInfo :: JobId -> Int -> TSBQueue DataFeed -> TQueue ResponseFeed -> ThreadId -> TVar TaskMap -> TaskInfo
 initialTaskInfo = TaskInfo
 
 sendResponse :: Response -> IO ()
@@ -168,10 +191,9 @@ raiseIE ti e = case fromException e of
 
 recvLoop :: TaskInfo -> Source IO ByteString
 recvLoop ti = do
-  msg <- lift $ atomically $ takeTMVar (taskDataBox ti)
+  msg <- lift $ atomically $ readTSBQueue (taskDataBox ti)
   case msg of
    DataChunk bs -> do
-     lift $ sendResponse $ ChunkAccepted (taskJobId ti)
      yield bs
      recvLoop ti
    DataFinished -> do
@@ -218,21 +240,23 @@ frame blockSize = do
     loop
   yield $ BSL.fromStrict checksum
 
-rechunk :: forall m. (Monad m) => Int -> Conduit BSL.ByteString m ByteString
+rechunk :: forall m. (MonadIO m) => Int -> Conduit BSL.ByteString m ByteString
 rechunk targetSize = go DL.empty 0
   where go :: DL.DList BSL.ByteString -> Int64 -> Conduit BSL.ByteString m ByteString
         go pfx !count =
           await >>= \case
             Just bs -> do
               let allBytes = DL.snoc pfx bs
-                  !total = count + BSL.length bs
-              if fromIntegral total >= targetSize
+                  here = BSL.length bs
+                  !total = count + here
+              if total >= targetSize64
                 then send (asStrict allBytes)
                 else go allBytes total
             Nothing -> do
               let bs = asStrict pfx
               unless (BS.null bs) $ yield bs
         asStrict = mconcat . concatMap BSL.toChunks . DL.toList
+        targetSize64 = fromIntegral targetSize :: Int64
         send bs = do
           let (toSend, toKeep) = BS.splitAt targetSize bs
           yield toSend
@@ -273,10 +297,14 @@ stage0 v act = do
   goAhead <- atomically $ takeTMVar v
   if goAhead then act else return ()
 
+sizeDataFeed :: DataFeed -> Int
+sizeDataFeed (DataChunk bs) = BS.length bs
+sizeDataFeed DataFinished = 0
+
 createJob :: JobId -> Int -> JobHasSig -> TVar TaskMap -> IO ()
 createJob i targetSize hasSig reg = mask_ $ mdo
   guard <- newEmptyTMVarIO
-  workerQueue <- newEmptyTMVarIO
+  workerQueue <- newTSBQueueIO targetSize sizeDataFeed
   responseQueue <- newTQueueIO
   let taskInfo = initialTaskInfo i targetSize workerQueue responseQueue potentialWorker reg
       w = case hasSig of
@@ -300,8 +328,10 @@ jobMessage jid req reg =
     m <- readTVar reg
     case Map.lookup jid m of
       Just taskInfo -> do
-        putTMVar (taskDataBox taskInfo) req
-        return $ return ()
+        writeTSBQueue (taskDataBox taskInfo) req
+        case req of
+         DataChunk _ -> return $ sendResponse $ ChunkAccepted jid
+         DataFinished -> return $ return ()
       Nothing ->
         return $ noSuchJob jid
 
@@ -325,19 +355,23 @@ removeJob ti = do
   m <- readTVar (taskMap ti)
   writeTVar (taskMap ti) $ Map.delete (taskJobId ti) m
 
+drainTSBQueue :: TSBQueue a -> STM ()
+drainTSBQueue q = do
+  e <- (Just <$> readTSBQueue q) <|> return Nothing
+  case e of
+   Just _ -> drainTSBQueue q
+   Nothing -> return ()
+
 killJob :: JobId -> TVar TaskMap -> IO ()
 killJob jid reg = join $ atomically $ do
   m <- readTVar reg
   case Map.lookup jid m of
    Just ti -> do
      removeJob ti
-     postKillAct <- tryTakeTMVar (taskDataBox ti) >>= \case
-       Just _ -> return $ noSuchJob jid
-       Nothing -> return $ return ()
+     drainTSBQueue (taskDataBox ti)
      return $ do
        -- putStrLn $ "Killing job " ++ show jid ++ ", which exists"
        killThread (taskThread ti)
-       postKillAct
    Nothing ->
      return $ do
        -- putStrLn $ "Not killing job " ++ show jid ++ ", which did not exist"
