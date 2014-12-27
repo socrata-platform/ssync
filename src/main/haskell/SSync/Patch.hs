@@ -66,11 +66,11 @@ patchComputer st = go
           -- DQ.validate "loop 1" q
           -- Is there a block at the current position in the queue?
           case findBlock st rc (hashComputer $ DQ.hashBlock q) of
-            Just b -> do
+            Just b ->
               -- Yes; add the data we've skipped, send the block ID
               -- itself, and then start over.
               blockFound q b sb
-            Nothing -> do
+            Nothing ->
               -- no; move forward 1 byte (which might entail dropping a block from the front
               -- of the queue; if that happens, it's data).
               attemptSlide rc q sb
@@ -92,7 +92,7 @@ patchComputer st = go
             Nothing ->
               -- can't even do that; we need more from upstream
               fetchMore rc q sb
-        fetchMore rc q sb = do
+        fetchMore rc q sb =
           awaitNonEmpty >>= \case
             Just nextBlock ->
               -- ok good.  By adding that block we might drop one from the queue;
@@ -127,7 +127,7 @@ patchComputer st = go
                 Nothing ->
                   finish rc' q' sb'
             -- Done!
-            (Just dropped, Nothing) -> do
+            (Just dropped, Nothing) ->
               addData blockSizeI dropped sb
             (Nothing, Nothing) ->
               return sb
@@ -139,8 +139,9 @@ yieldBlock i sb = do
 
 yieldData :: (Monad m) => SizedBuilder -> Producer m Chunk
 yieldData (SizedBuilder pendingL pendingS) =
-  unless (pendingS == 0) $
-    yield $ Data $ BSL.fromChunks $ DL.toList pendingL
+  unless (pendingS == 0) $ do
+    let bytes = BSL.fromChunks $ DL.toList pendingL
+    yield $ Data bytes
 
 addData :: (Monad m) => Int ->ByteString -> SizedBuilder -> ConduitM a Chunk m SizedBuilder
 addData blockSize bs sb@(SizedBuilder pendingL pendingS) =

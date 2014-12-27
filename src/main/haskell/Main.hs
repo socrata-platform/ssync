@@ -4,7 +4,7 @@
 
 {-# LANGUAGE OverloadedStrings, RecursiveDo, MultiWayIf, RankNTypes, LambdaCase, BangPatterns, ScopedTypeVariables #-}
 
-module Main where
+module Main (main) where
 
 import Control.Exception
 import Control.Concurrent hiding (yield)
@@ -63,23 +63,27 @@ data DataFeed = DataChunk ByteString -- ^ Send a block of bytes to the worker; t
               | DataFinished -- ^ Finished sending data, move to the next phase.  Receives either 'SigComplete' or 'PatchChunks'/'PatchComplete' in response
               deriving (Show)
 
-data Request = NewJob JobId Int -- ^ Establish a job context; 'JobCreated' is sent in response.
+data ResponseFeed = ResponseAccepted -- ^ Sent from JS in response to a PatchChunk message
+                  deriving (Show)
+
+data Request = NewJob JobId Int JobHasSig -- ^ Establish a job context; 'JobCreated' is sent in response.
              | TerminateJob JobId -- ^ Terminate a job context prematurely; nothing is sent back.
              | DataJob JobId DataFeed -- ^ See 'DataFeed'
+             | ResponseJob JobId ResponseFeed -- ^ See 'ResponseFeed'
              deriving (Show)
 
-reqNEW, reqTERMINATE, reqDATA, reqDATADONE :: Text
+reqNEW, reqNEWFAKESIG, reqTERMINATE, reqDATA, reqDATADONE, reqRESPACCEPTED :: Text
 reqNEW = "NEW"
+reqNEWFAKESIG = "NEWFAKESIG"
 reqTERMINATE = "TERM"
 reqDATA = "DATA"
 reqDATADONE = "DONE"
+reqRESPACCEPTED = "CHUNKACCEPTED"
 
-jobId :: Request -> JobId
-jobId (NewJob i _) = i
-jobId (TerminateJob i) = i
-jobId (DataJob i _) = i
+data JobHasSig = JobHasSig | JobHasNoSig
+               deriving (Show)
 
-data Response = JobCreated JobId -- ^ Sent in response to a job context; phase is now "gathering signature"
+data Response = JobCreated JobId -- ^ Sent in response to a job context; phase is now "gathering signature" or "computing patch" depending on whether the job had a signature.
               | ChunkAccepted JobId -- ^ Sent in response to 'DataChunk'
               | SigComplete JobId -- ^ Sent in response to 'DataFinished' in the "gathering signature" phase.  Phase is now "computing patch".
               | SigError JobId ParseError -- ^ Sent at any time during "gathering signature"; the job is terminated.
@@ -103,12 +107,13 @@ type TaskMap = Map.Map JobId TaskInfo
 
 data TaskInfo = TaskInfo { taskJobId :: JobId
                          , taskTargetChunkSize :: Int
-                         , taskQueue :: TQueue DataFeed
+                         , taskDataBox :: TMVar DataFeed
+                         , taskResponseQueue :: TQueue ResponseFeed -- queue because it needs to never block
                          , taskThread :: ThreadId
                          , taskMap :: TVar TaskMap
                          }
 
-initialTaskInfo :: JobId -> Int -> TQueue DataFeed -> ThreadId -> TVar TaskMap -> TaskInfo
+initialTaskInfo :: JobId -> Int -> TMVar DataFeed -> TQueue ResponseFeed -> ThreadId -> TVar TaskMap -> TaskInfo
 initialTaskInfo = TaskInfo
 
 sendResponse :: Response -> IO ()
@@ -130,20 +135,25 @@ deserializeRequest :: T.JSRef JSRequest -> IO Request
 deserializeRequest jsReq = do
   jid <- JobId `fmap` jsReqId jsReq
   cmd <- F.fromJSString `fmap` jsReqCommand jsReq
-  if | cmd == reqNEW -> do
-         size <- jsReqSize jsReq
-         return $ NewJob jid size
-     | cmd == reqTERMINATE ->
-         return $ TerminateJob jid
-     | cmd == reqDATA -> do
+  if | cmd == reqDATA -> do
          rawByteArray <- jsReqBytes jsReq
          buffer <- jsByteArrayBuffer rawByteArray
          offset <- jsByteArrayOffset rawByteArray
          len <- jsByteArrayLength rawByteArray
          bs <- F.bufferByteString offset len buffer
          return $ DataJob jid $ DataChunk bs
+     | cmd == reqNEW -> do
+         size <- jsReqSize jsReq
+         return $ NewJob jid size JobHasSig
+     | cmd == reqNEWFAKESIG -> do
+         size <- jsReqSize jsReq
+         return $ NewJob jid size JobHasNoSig
+     | cmd == reqTERMINATE ->
+         return $ TerminateJob jid
      | cmd == reqDATADONE -> do
          return $ DataJob jid $ DataFinished
+     | cmd == reqRESPACCEPTED -> do
+         return $ ResponseJob jid ResponseAccepted
      | otherwise ->
          error $ "unknown command " ++ TXT.unpack cmd
 
@@ -158,13 +168,13 @@ raiseIE ti e = case fromException e of
 
 recvLoop :: TaskInfo -> Source IO ByteString
 recvLoop ti = do
-  msg <- lift $ atomically $ readTQueue (taskQueue ti)
+  msg <- lift $ atomically $ takeTMVar (taskDataBox ti)
   case msg of
    DataChunk bs -> do
      lift $ sendResponse $ ChunkAccepted (taskJobId ti)
      yield bs
      recvLoop ti
-   DataFinished ->
+   DataFinished -> do
      return ()
 
 gatheringSignature :: TaskInfo -> IO SignatureTable
@@ -213,17 +223,16 @@ rechunk targetSize = go DL.empty 0
   where go :: DL.DList BSL.ByteString -> Int64 -> Conduit BSL.ByteString m ByteString
         go pfx !count =
           await >>= \case
-            Just bs ->
+            Just bs -> do
               let allBytes = DL.snoc pfx bs
                   !total = count + BSL.length bs
-              in if total >= targetSize64
-                 then send (asStrict allBytes)
-                 else go allBytes total
+              if fromIntegral total >= targetSize
+                then send (asStrict allBytes)
+                else go allBytes total
             Nothing -> do
               let bs = asStrict pfx
               unless (BS.null bs) $ yield bs
         asStrict = mconcat . concatMap BSL.toChunks . DL.toList
-        targetSize64 = fromIntegral targetSize
         send bs = do
           let (toSend, toKeep) = BS.splitAt targetSize bs
           yield toSend
@@ -231,28 +240,49 @@ rechunk targetSize = go DL.empty 0
             then send toKeep
             else go (DL.singleton $ BSL.fromStrict toKeep) (fromIntegral $ BS.length toKeep)
 
+acceptPatchChunkAck :: TaskInfo -> IO ()
+acceptPatchChunkAck ti = do
+  resp <- atomically $ readTQueue (taskResponseQueue ti)
+  case resp of -- just here to warn if another case gets added to ResponseFeed
+   ResponseAccepted -> return ()
+
 sendChunks :: TaskInfo -> Sink ByteString IO ()
-sendChunks ti = awaitForever $ lift . sendResponse . PatchChunk (taskJobId ti)
+sendChunks ti = await >>= \case
+  Just firstChunk -> do
+    -- in order to maximize parallelism, we want to delay the
+    -- taskResponseQueue read by one chunk.  Thus the await-then-
+    -- awaitForever structure.
+    lift $ sendResponse $ PatchChunk (taskJobId ti) firstChunk
+    awaitForever $ \bytes -> lift $ do
+      acceptPatchChunkAck ti
+      sendResponse $ PatchChunk (taskJobId ti) bytes
+    lift $ acceptPatchChunkAck ti
+  Nothing ->
+    return ()
 
 computingPatch :: TaskInfo -> SignatureTable -> IO ()
 computingPatch ti st = do
   recvLoop ti $$ patchComputer st $= mapC serializeChunk $= frame (stBlockSize st) $= rechunk (taskTargetChunkSize ti) $= sendChunks ti
   sendResponse $ PatchComplete (taskJobId ti)
 
-worker :: (forall a. IO a -> IO a) -> TaskInfo -> IO ()
-worker unmask ti = handle (raiseIE ti) (unmask $ gatheringSignature ti >>= computingPatch ti) `finally` removeJob ti
+worker :: (forall a. IO a -> IO a) -> TaskInfo -> IO () -> IO ()
+worker unmask ti op = handle (raiseIE ti) (unmask op) `finally` (atomically $ removeJob ti)
 
 stage0 :: TMVar Bool -> IO () -> IO ()
 stage0 v act = do
   goAhead <- atomically $ takeTMVar v
   if goAhead then act else return ()
 
-createJob :: JobId -> Int -> TVar TaskMap -> IO ()
-createJob i targetSize reg = mask_ $ mdo
+createJob :: JobId -> Int -> JobHasSig -> TVar TaskMap -> IO ()
+createJob i targetSize hasSig reg = mask_ $ mdo
   guard <- newEmptyTMVarIO
-  workerQueue <- newTQueueIO
-  let taskInfo = initialTaskInfo i targetSize workerQueue potentialWorker reg
-  potentialWorker <- forkIOWithUnmask (\u -> stage0 guard $ worker u taskInfo)
+  workerQueue <- newEmptyTMVarIO
+  responseQueue <- newTQueueIO
+  let taskInfo = initialTaskInfo i targetSize workerQueue responseQueue potentialWorker reg
+      w = case hasSig of
+        JobHasSig -> gatheringSignature taskInfo >>= computingPatch taskInfo
+        JobHasNoSig -> computingPatch taskInfo emptySignature
+  potentialWorker <- forkIOWithUnmask (\u -> stage0 guard $ worker u taskInfo w)
   join $ atomically $ do
     m <- readTVar reg
     case Map.lookup i m of
@@ -262,7 +292,7 @@ createJob i targetSize reg = mask_ $ mdo
         return $ sendResponse (JobCreated i)
       Just _ -> do
         putTMVar guard False
-        return $ sendResponse (BadSequencing i "job already exists")
+        return $ alreadyExistsJob i
 
 jobMessage :: JobId -> DataFeed -> TVar TaskMap -> IO ()
 jobMessage jid req reg =
@@ -270,13 +300,28 @@ jobMessage jid req reg =
     m <- readTVar reg
     case Map.lookup jid m of
       Just taskInfo -> do
-        writeTQueue (taskQueue taskInfo) req
+        putTMVar (taskDataBox taskInfo) req
         return $ return ()
       Nothing ->
-          return $ sendResponse (BadSequencing jid "job does not exist")
+        return $ noSuchJob jid
 
-removeJob :: TaskInfo -> IO ()
-removeJob ti = atomically $ do
+responseMessage :: JobId -> ResponseFeed -> TVar TaskMap -> IO ()
+responseMessage jid r reg = do
+  join $ atomically $ do
+    m <- readTVar reg
+    case Map.lookup jid m of
+     Just taskInfo -> do
+       writeTQueue (taskResponseQueue taskInfo) r
+       return $ return ()
+     Nothing ->
+       return $ noSuchJob jid
+
+noSuchJob, alreadyExistsJob :: JobId -> IO ()
+noSuchJob jid = sendResponse (BadSequencing jid "job does not exist")
+alreadyExistsJob jid = sendResponse (BadSequencing jid "job already exists")
+
+removeJob :: TaskInfo -> STM ()
+removeJob ti = do
   m <- readTVar (taskMap ti)
   writeTVar (taskMap ti) $ Map.delete (taskJobId ti) m
 
@@ -284,20 +329,21 @@ killJob :: JobId -> TVar TaskMap -> IO ()
 killJob jid reg = join $ atomically $ do
   m <- readTVar reg
   case Map.lookup jid m of
-   Just ti ->
+   Just ti -> do
+     removeJob ti
+     postKillAct <- tryTakeTMVar (taskDataBox ti) >>= \case
+       Just _ -> return $ noSuchJob jid
+       Nothing -> return $ return ()
      return $ do
        -- putStrLn $ "Killing job " ++ show jid ++ ", which exists"
        killThread (taskThread ti)
-       removeJob ti
+       postKillAct
    Nothing ->
      return $ do
        -- putStrLn $ "Not killing job " ++ show jid ++ ", which did not exist"
        return () -- killing a nonexistant task is ok
 
--- Fun wit
 foreign import javascript unsafe "new Uint8Array($1_1.buf, $1_2, $2)" extractBA :: Ptr a -> Int -> IO (T.JSRef JSByteArray)
-
-foreign import javascript unsafe "console.log($1)" dump :: T.JSRef JSByteArray -> IO ()
 
 uint8ArrayOfByteString :: ByteString -> IO (T.JSRef JSByteArray)
 uint8ArrayOfByteString bs =
@@ -311,12 +357,14 @@ main = do
     req <- evData ev >>= deserializeRequest
     -- putStrLn $ "got message from client: " ++ show req
     case req of
-     NewJob i targetSize ->
-       createJob i targetSize registrations
+     NewJob i targetSize hasSig ->
+       createJob i targetSize hasSig registrations
      TerminateJob i ->
        killJob i registrations
      DataJob i df ->
        jobMessage i df registrations
+     ResponseJob i r ->
+       responseMessage i r registrations
   onmessage callback
 
 #else
@@ -337,10 +385,11 @@ import SSync.Patch
 main :: IO ()
 main = do
   let sig = "twocol-large.ssig"
-      dat = "twocol-large.csv"
-  l <- AP.parseOnly signatureTableParser `fmap` BS.readFile sig >>= \(Right l) -> return l
+      dat = "/home/robertm/di2-data/twocol/twocol.csv"
+  l <- -- AP.parseOnly signatureTableParser `fmap` BS.readFile sig >>= \(Right l) -> return l
+    return emptySignature
   print $ smallify l
-  if False
+  if True
     then do
       bs <- BS.readFile dat
       yield bs $$ patchComputer l $= (awaitForever $ liftIO . printChunk)

@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, RankNTypes, ScopedTypeVariables, DeriveDataTypeable, BangPatterns, RecordWildCards, NamedFieldPuns, MultiWayIf, LambdaCase #-}
+{-# LANGUAGE CPP, RankNTypes, ScopedTypeVariables, DeriveDataTypeable, BangPatterns, RecordWildCards, NamedFieldPuns, MultiWayIf, LambdaCase, OverloadedStrings #-}
 
 module SSync.SignatureTable (
   SignatureTable
@@ -9,6 +9,7 @@ module SSync.SignatureTable (
 , signatureTableParser
 , findBlock
 , strongHashComputer
+, emptySignature
 ) where
 
 import SSync.Hash
@@ -137,6 +138,17 @@ smallify ST{..} =
      , stBlocks = V.empty
      , stChecksumLookup = PV.empty
      }
+
+emptySignature :: SignatureTable
+emptySignature = ST { stBlockSize = maxBlockSize
+                    , stBlockSizeI = fromIntegral maxBlockSize
+                    , stStrongAlg = "MD5"
+                    , stBlocks = V.empty
+                    , stChecksumLookup = PV.create $ do
+                        v <- MPV.new $ 1 `shiftL` 17
+                        MPV.set v 0
+                        return v
+                    }
 
 receiveBlock :: Int -> Word32 -> HashT Parser BlockSpec
 receiveBlock hashSize n = do
