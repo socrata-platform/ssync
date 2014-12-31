@@ -406,6 +406,8 @@ main = do
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
+import System.Environment
+
 import qualified Data.Attoparsec.ByteString as AP
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -418,10 +420,17 @@ import SSync.Patch
 
 main :: IO ()
 main = do
-  let sig = "twocol-large.ssig"
-      dat = "/home/robertm/di2-data/twocol/twocol.csv"
-  l <- -- AP.parseOnly signatureTableParser `fmap` BS.readFile sig >>= \(Right l) -> return l
-    return emptySignature
+  args <- getArgs
+  case args of
+   [dat, sig] ->
+     go dat sig
+   _ -> do
+     argv0 <- getProgName
+     putStrLn $ "Usage: " ++ argv0 ++ " DATFILE SIGFILE"
+
+go :: String -> String -> IO ()
+go dat sig = do
+  l <- AP.parseOnly signatureTableParser `fmap` BS.readFile sig >>= \(Right l) -> return l
   print $ smallify l
   if True
     then do
