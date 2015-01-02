@@ -6,7 +6,6 @@
 
 module Main (main) where
 
-import Control.Applicative
 import Control.Exception
 import Control.Concurrent hiding (yield)
 import Control.Concurrent.STM
@@ -14,11 +13,9 @@ import Control.Concurrent.STM
 import qualified GHCJS.Types as T
 import qualified GHCJS.Foreign as F
 import qualified Data.Text as TXT
-import Data.Text (Text)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
-import qualified Data.ByteString.Unsafe as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Map.Strict as Map
 import Control.Monad (join, (<=<), unless)
@@ -35,96 +32,13 @@ import SSync.SignatureTable
 import SSync.Patch
 import SSync.Hash
 
-import GHC.Ptr
-
-data JSEvent
-data JSRequest
-data JSResponse
-data JSByteArray
-data JSArrayBuffer
+import TSBQueue
+import Request
+import Response
+import Types
 
 foreign import javascript unsafe "onmessage = $1" onmessage :: T.JSFun (T.JSRef JSEvent -> IO b) -> IO ()
 foreign import javascript unsafe "postMessage($1)" postMessage :: T.JSRef JSResponse -> IO ()
-foreign import javascript unsafe "$1.data" evData :: T.JSRef JSEvent -> IO (T.JSRef JSRequest)
-foreign import javascript unsafe "$1.id" jsReqId :: T.JSRef JSRequest -> IO Int
-foreign import javascript unsafe "$1.command" jsReqCommand :: T.JSRef JSRequest -> IO T.JSString
-foreign import javascript unsafe "$1.bytes" jsReqBytes :: T.JSRef JSRequest -> IO (T.JSRef JSByteArray)
-foreign import javascript unsafe "$1.size" jsReqSize :: T.JSRef JSRequest -> IO Int
-foreign import javascript unsafe "$r = { id : $1, command : $2 } " jsRespNoData :: Int -> T.JSString -> IO (T.JSRef JSResponse)
-foreign import javascript unsafe "$r = { id : $1, command : $2, bytes: $3 } " jsRespData :: Int -> T.JSString -> T.JSRef JSByteArray -> IO (T.JSRef JSResponse)
-foreign import javascript unsafe "$r = { id : $1, command : $2, text: $3 } " jsRespText :: Int -> T.JSString -> T.JSString -> IO (T.JSRef JSResponse)
-
-foreign import javascript unsafe "$1.buffer" jsByteArrayBuffer :: T.JSRef JSByteArray -> IO (T.JSRef JSArrayBuffer)
-foreign import javascript unsafe "$1.byteOffset" jsByteArrayOffset :: T.JSRef JSByteArray -> IO Int
-foreign import javascript unsafe "$1.length" jsByteArrayLength :: T.JSRef JSByteArray -> IO Int
-
-newtype JobId = JobId Int deriving (Show, Eq, Ord)
-
-data DataFeed = DataChunk ByteString -- ^ Send a block of bytes to the worker; the meaning (sig or data) depends on the phase.  Receives 'ChunkAccepted' in response.
-              | DataFinished -- ^ Finished sending data, move to the next phase.  Receives either 'SigComplete' or 'PatchChunks'/'PatchComplete' in response
-              deriving (Show)
-
-data ResponseFeed = ResponseAccepted -- ^ Sent from JS in response to a PatchChunk message
-                  deriving (Show)
-
-data Request = NewJob JobId Int JobHasSig -- ^ Establish a job context; 'JobCreated' is sent in response.
-             | TerminateJob JobId -- ^ Terminate a job context prematurely; nothing is sent back.
-             | DataJob JobId DataFeed -- ^ See 'DataFeed'
-             | ResponseJob JobId ResponseFeed -- ^ See 'ResponseFeed'
-             deriving (Show)
-
-reqNEW, reqNEWFAKESIG, reqTERMINATE, reqDATA, reqDATADONE, reqRESPACCEPTED :: Text
-reqNEW = "NEW"
-reqNEWFAKESIG = "NEWFAKESIG"
-reqTERMINATE = "TERM"
-reqDATA = "DATA"
-reqDATADONE = "DONE"
-reqRESPACCEPTED = "CHUNKACCEPTED"
-
-data TSBQueue a = TSBQueue Int (TVar Int) (a -> Int) (TQueue (a, Int))
-newTSBQueueIO :: Int -> (a -> Int) -> IO (TSBQueue a)
-newTSBQueueIO maxTotalSize sizer = do
-  underlying <- newTQueueIO
-  current <- newTVarIO 0
-  return $ TSBQueue maxTotalSize current sizer underlying
-
-writeTSBQueue :: TSBQueue a -> a -> STM ()
-writeTSBQueue (TSBQueue limit current sizer underlying) a = do
-  c <- readTVar current
-  let size = sizer a
-      new = c + size
-  unless (new <= limit) retry
-  writeTVar current new
-  writeTQueue underlying (a, size)
-
-readTSBQueue :: TSBQueue a -> STM a
-readTSBQueue (TSBQueue _ current _ underlying) = do
-  (res, size) <- readTQueue underlying
-  modifyTVar current (subtract size)
-  return res
-
-data JobHasSig = JobHasSig | JobHasNoSig
-               deriving (Show)
-
-data Response = JobCreated JobId -- ^ Sent in response to a job context; phase is now "gathering signature" or "computing patch" depending on whether the job had a signature.
-              | ChunkAccepted JobId -- ^ Sent in response to 'DataChunk'
-              | SigComplete JobId -- ^ Sent in response to 'DataFinished' in the "gathering signature" phase.  Phase is now "computing patch".
-              | SigError JobId ParseError -- ^ Sent at any time during "gathering signature"; the job is terminated.
-              | PatchChunk JobId ByteString -- ^ Sent (asynchronously!) during "computing patch".
-              | PatchComplete JobId -- ^ Sent in response to 'DataFinished' in the "computing patch" phase.  Phase is now "terminated".
-              | BadSequencing JobId Text -- ^ Sent in response to any unexpected message
-              | InternalError JobId Text -- ^ Sent in response to a crash
-              deriving (Show)
-
-respCREATED, respCHUNKACCEPTED, respSIGCOMPLETE, respSIGERROR, respPATCHCHUNK, respPATCHCOMPLETE, respBADSEQ, respINTERNALERROR :: T.JSString
-respCREATED = "CREATED"
-respCHUNKACCEPTED = "CHUNKACCEPTED"
-respSIGCOMPLETE = "SIGCOMPLETE"
-respSIGERROR = "SIGERROR"
-respPATCHCHUNK = "CHUNK"
-respPATCHCOMPLETE = "COMPLETE"
-respBADSEQ = "BADSEQ"
-respINTERNALERROR = "ERRORERRORDOESNOTCOMPUTE"
 
 type TaskMap = Map.Map JobId TaskInfo
 
@@ -141,44 +55,6 @@ initialTaskInfo = TaskInfo
 
 sendResponse :: Response -> IO ()
 sendResponse = postMessage <=< serializeResponse
-
-serializeResponse :: Response -> IO (T.JSRef JSResponse)
-serializeResponse resp =
-  case resp of
-    JobCreated (JobId jid) -> jsRespNoData jid respCREATED
-    ChunkAccepted (JobId jid) -> jsRespNoData jid respCHUNKACCEPTED
-    SigComplete (JobId jid) -> jsRespNoData jid respSIGCOMPLETE
-    SigError (JobId jid) msg -> jsRespText jid respSIGERROR $ F.toJSString $ errorMessage msg
-    PatchChunk (JobId jid) bs -> uint8ArrayOfByteString bs >>= jsRespData jid respPATCHCHUNK
-    PatchComplete (JobId jid) -> jsRespNoData jid respPATCHCOMPLETE
-    BadSequencing (JobId jid) msg -> jsRespText jid respBADSEQ $ F.toJSString msg
-    InternalError (JobId jid) msg -> jsRespText jid respINTERNALERROR $ F.toJSString msg
-
-deserializeRequest :: T.JSRef JSRequest -> IO Request
-deserializeRequest jsReq = do
-  jid <- JobId `fmap` jsReqId jsReq
-  cmd <- F.fromJSString `fmap` jsReqCommand jsReq
-  if | cmd == reqDATA -> do
-         rawByteArray <- jsReqBytes jsReq
-         buffer <- jsByteArrayBuffer rawByteArray
-         offset <- jsByteArrayOffset rawByteArray
-         len <- jsByteArrayLength rawByteArray
-         bs <- F.bufferByteString offset len buffer
-         return $ DataJob jid $ DataChunk bs
-     | cmd == reqNEW -> do
-         size <- jsReqSize jsReq
-         return $ NewJob jid size JobHasSig
-     | cmd == reqNEWFAKESIG -> do
-         size <- jsReqSize jsReq
-         return $ NewJob jid size JobHasNoSig
-     | cmd == reqTERMINATE ->
-         return $ TerminateJob jid
-     | cmd == reqDATADONE -> do
-         return $ DataJob jid $ DataFinished
-     | cmd == reqRESPACCEPTED -> do
-         return $ ResponseJob jid ResponseAccepted
-     | otherwise ->
-         error $ "unknown command " ++ TXT.unpack cmd
 
 raiseIE :: TaskInfo ->SomeException -> IO ()
 raiseIE ti e = case fromException e of
@@ -355,13 +231,6 @@ removeJob ti = do
   m <- readTVar (taskMap ti)
   writeTVar (taskMap ti) $ Map.delete (taskJobId ti) m
 
-drainTSBQueue :: TSBQueue a -> STM ()
-drainTSBQueue q = do
-  e <- (Just <$> readTSBQueue q) <|> return Nothing
-  case e of
-   Just _ -> drainTSBQueue q
-   Nothing -> return ()
-
 killJob :: JobId -> TVar TaskMap -> IO ()
 killJob jid reg = join $ atomically $ do
   m <- readTVar reg
@@ -377,18 +246,11 @@ killJob jid reg = join $ atomically $ do
        -- putStrLn $ "Not killing job " ++ show jid ++ ", which did not exist"
        return () -- killing a nonexistant task is ok
 
-foreign import javascript unsafe "new Uint8Array($1_1.buf, $1_2, $2)" extractBA :: Ptr a -> Int -> IO (T.JSRef JSByteArray)
-
-uint8ArrayOfByteString :: ByteString -> IO (T.JSRef JSByteArray)
-uint8ArrayOfByteString bs =
-  BS.unsafeUseAsCString bs $ \ptr ->
-    extractBA ptr (BS.length bs)
-
 main :: IO ()
 main = do
   registrations <- newTVarIO Map.empty
   callback <- F.asyncCallback1 F.AlwaysRetain $ \ev -> do
-    req <- evData ev >>= deserializeRequest
+    req <- extractRequest ev
     -- putStrLn $ "got message from client: " ++ show req
     case req of
      NewJob i targetSize hasSig ->

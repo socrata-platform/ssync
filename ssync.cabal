@@ -41,6 +41,10 @@ executable ssync
   default-language:    Haskell2010
   ghc-options: -O2 -Wall
   if impl(ghcjs)
+     other-modules: Request
+                  , Response
+                  , TSBQueue
+                  , Types
      cpp-options: -DSTUPID_HASH -DSTUPID_VECT -DGHCJS_BROWSER
      build-depends: Crypto == 4.2.5.1
                   , pureMD5 == 2.1.2.1
