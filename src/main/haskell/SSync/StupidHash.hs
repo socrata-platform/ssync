@@ -10,44 +10,57 @@ module SSync.StupidHash (
 ) where
 
 import qualified Data.Digest.Pure.MD5 as MD5 -- pureMD5 is 10x faster than Crypto's MD5
-import qualified Data.Digest.SHA1 as SHA1
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
-import Data.ByteString (ByteString)
+import qualified Data.DList as DL
 import Control.Monad.State.Strict
 import Data.Serialize (encode)
 
 import Control.Exception
 import Data.Typeable
 import Data.Text (Text)
-import Data.Word (Word8, Word32)
-import qualified Data.DList as DL
-import Data.Bits (shiftR)
+import Data.Tagged (untag, Tagged)
+import Crypto.Types (BitLength)
 
 data NoSuchHashAlgorithm = NoSuchHashAlgorithm Text deriving (Show, Typeable)
 
 instance Exception NoSuchHashAlgorithm
 
-type S = ([ByteString] -> ByteString, (DL.DList ByteString))
+data S = S !(DL.DList BS.ByteString) !Int !MD5.MD5Context
 
 type HashT m = StateT S m
 
 withHashM :: (Monad m) => Text -> HashT m b -> m b
-withHashM alg op = flip evalStateT (hasher alg, DL.empty) op
+withHashM "MD5" op = flip evalStateT (S DL.empty targetBlockSizeBytes MD5.initialCtx) op
+withHashM other _ = throw $ NoSuchHashAlgorithm other
+
+targetBlockSizeBytes :: Int
+targetBlockSizeBytes = untag (MD5.blockLength :: Tagged MD5.MD5Digest BitLength) `div` 8
 
 -- | Feed the current hash with some bytes.
 update :: (Monad m) => BS.ByteString -> HashT m ()
-update bs = modify (addBytes bs)
+update bs = unless (BS.null bs) $ do
+  (S soFar remaining ctx) <- get
+  let soFar' = DL.snoc soFar bs
+      remaining' = remaining - BS.length bs
+  if remaining' <= 0
+    then let (chunks, lastChunk) = chunk targetBlockSizeBytes $ DL.toList soFar'
+             ctx' = MD5.updateCtx ctx chunks
+         in if BS.null lastChunk
+            then put (S DL.empty targetBlockSizeBytes ctx')
+            else put (S (DL.singleton lastChunk) (targetBlockSizeBytes - BS.length lastChunk) ctx')
+    else put (S soFar' remaining' ctx)
 
-addBytes :: ByteString -> S -> S
-addBytes bs (f, dl) = (f, DL.snoc dl bs)
+chunk :: Int -> [BS.ByteString] -> (BS.ByteString, BS.ByteString)
+chunk target bs =
+  let flattened = BS.concat bs
+      splitPoint = BS.length flattened - (BS.length flattened `rem` target)
+  in BS.splitAt splitPoint flattened
 
--- | Returns the current value of the hash.
 digest :: (Monad m) => HashT m BS.ByteString
 digest = do
-  (f, bytes') <- get
-  let bytes = DL.toList bytes'
-  return $ f bytes
+  (S bytes _ ctx) <- get
+  let d = MD5.finalize ctx (BS.concat $ DL.toList bytes)
+  return $ encode d
 
 -- | Returns the size of the current hash's digest, in bytes.  Note:
 -- this is not a fast operation.
@@ -55,15 +68,3 @@ digestSize :: (Monad m) => (HashT m Int)
 digestSize = do
   d <- digest
   return $ BS.length d
-
-hasher :: Text -> [ByteString] -> ByteString
-hasher "MD5" = encode . MD5.md5 . BSL.fromChunks
-hasher "SHA1" = shaRes . SHA1.hash . concatMap BS.unpack
-hasher other = throw $ NoSuchHashAlgorithm other
-
-shaRes :: SHA1.Word160 -> ByteString
-shaRes (SHA1.Word160 a b c d e) =
-  BS.pack $ buildWord a $ buildWord b $ buildWord c $ buildWord d $ buildWord e []
-
-buildWord :: Word32 -> [Word8] -> [Word8]
-buildWord w tl = (fromIntegral $ w `shiftR` 24) : (fromIntegral $ w `shiftR` 16) : (fromIntegral $ w `shiftR` 8) : fromIntegral w : tl
