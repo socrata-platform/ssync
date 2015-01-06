@@ -19,8 +19,8 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Algorithms.Intro as MV
 #ifdef STUPID_VECT
-import qualified Data.Vector as PV
-import qualified Data.Vector.Mutable as MPV
+import qualified SSync.JSVector as PV
+import qualified SSync.JSVectorM as MPV
 #else
 import qualified Data.Vector.Primitive as PV
 import qualified Data.Vector.Primitive.Mutable as MPV
@@ -34,7 +34,7 @@ import Data.Attoparsec.ByteString (Parser)
 import qualified Data.Attoparsec.ByteString as AP
 import qualified Data.ByteString as BS
 import Data.ByteString (ByteString)
-import Data.Word (Word8, Word32, Word64)
+import Data.Word (Word8, Word32)
 import Control.Monad (unless, when)
 import Data.Text.Encoding (decodeUtf8)
 import Data.Text (Text)
@@ -45,6 +45,12 @@ import qualified Debug.Trace as DT
 
 t :: (Show a) => String -> a -> a
 t label x = DT.trace (label ++ " : " ++ show x) x
+#endif
+
+#ifdef STUPID_VECT
+type PVI = PV.Vector
+#else
+type PVI = PV.Vector Int
 #endif
 
 shortStringNoCS :: Parser Text
@@ -123,7 +129,7 @@ data SignatureTable = ST { stBlockSize :: {-# UNPACK #-} !Word32 -- \ The same, 
                          , stBlocks :: !(V.Vector BlockSpec)
                          -- ^ BlockSpecs ordered by (weak16 checksum,
                          -- checksum, entry)
-                         , stChecksumLookup :: !(PV.Vector Int)
+                         , stChecksumLookup :: !PVI
                          -- ^ pairs of indices into stBlocks for each
                          -- possible hash16(checksum) value,
                          -- indicating the start and end of the range
@@ -188,7 +194,7 @@ checksums (BlockSpec n1 rc1 _) (BlockSpec n2 rc2 _) = do
     other ->
       other
 
-indexBlocks :: V.Vector BlockSpec -> PV.Vector Int
+indexBlocks :: V.Vector BlockSpec -> PVI
 indexBlocks blocks =
   PV.create $ do
     v <- MPV.new (1 `shiftL` 17)
@@ -266,7 +272,7 @@ findFirstWeakEntry st@ST{..} start end target = go start end
   where go p e =
           if e - p < linearProbeThreshold
           then linearProbe st p e target
-          else let m = fromIntegral $ ((fromIntegral p :: Word64) + fromIntegral e) `shiftR` 1
+          else let m = (p + e) `shiftR` 1 -- Not quite safe in general, but if + can overflow we have other problems
                    h = bsChecksum $ stBlocks V.! m
                in if | h < target -> go (m+1) e
                      | h > target -> go p m

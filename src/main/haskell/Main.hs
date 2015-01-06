@@ -165,6 +165,11 @@ computingPatch ti st = do
   recvLoop ti $$ patchComputer st $= mapC serializeChunk $= frame (stBlockSize st) $= rechunk (taskTargetChunkSize ti) $= sendChunks ti
   sendResponse $ PatchComplete (taskJobId ti)
 
+nullaryPatch :: TaskInfo -> SignatureTable -> IO ()
+nullaryPatch ti st = do
+  recvLoop ti $$ mapC BSL.fromStrict $= rechunk (stBlockSizeI st) $= (mapC (serializeChunk . Data . BSL.fromStrict) >> yield (serializeChunk End)) $= frame (stBlockSize st) $= rechunk (taskTargetChunkSize ti) $= sendChunks ti
+  sendResponse $ PatchComplete (taskJobId ti)
+
 worker :: (forall a. IO a -> IO a) -> TaskInfo -> IO () -> IO ()
 worker unmask ti op = handle (raiseIE ti) (unmask op) `finally` (atomically $ removeJob ti)
 
@@ -185,7 +190,7 @@ createJob i targetSize hasSig reg = mask_ $ mdo
   let taskInfo = initialTaskInfo i targetSize workerQueue responseQueue potentialWorker reg
       w = case hasSig of
         JobHasSig -> gatheringSignature taskInfo >>= computingPatch taskInfo
-        JobHasNoSig -> computingPatch taskInfo emptySignature
+        JobHasNoSig -> nullaryPatch taskInfo emptySignature
   potentialWorker <- forkIOWithUnmask (\u -> stage0 guard $ worker u taskInfo w)
   join $ atomically $ do
     m <- readTVar reg
