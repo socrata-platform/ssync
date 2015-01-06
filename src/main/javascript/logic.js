@@ -301,7 +301,7 @@ function readFile(job, file, progress, chunk, done, uploadUrl, authHeaders) {
         job: job,
         reader: new FileReader(),
         file: file,
-        chunkSize: 10240, // size of each read from the file
+        chunkSize: 81920, // size of each read from the file
         uploadUrl: uploadUrl,
         authHeaders: authHeaders,
 
