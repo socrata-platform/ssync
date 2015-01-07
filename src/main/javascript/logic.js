@@ -401,7 +401,7 @@ function go() {
             var generatePatch = function(job) {
                 msg("Yay parsed! -- next up: doing the file");
                 var progress = function(read, total, sent) {
-                    msg("read " + Math.round(100000*read/total)/1000 + "%; sent " + sent + " bytes");
+                    msg("read " + read + " bytes ("+ (100*read/total).toFixed(3) + "%); sent " + sent + " bytes");
                 }
                 var chunk = function(c) {
                     out(c);
