@@ -380,6 +380,16 @@ function go() {
     $("#message").empty();
     var file = $("#input")[0].files[0];
     var ff = $("#fourfour").val();
+    var controlFile = undefined;
+    try {
+        controlFile = JSON.parse($("#control").val());
+    } catch (e) {
+        if(e instanceof SyntaxError) {
+            msg("Invalid control file: " + e.message);
+            return;
+        }
+        throw e;
+    }
     var datasyncBase = "/datasync"
     var versionUrl = datasyncBase + "/version.json"
     var datasetBase = datasyncBase + "/id/" + ff
@@ -408,7 +418,7 @@ function go() {
                 }
                 var finished = function(chunks, size) {
                     msg("Uploaded CSV (" + file.size + " bytes; required " + size + " bytes to be uploaded)");
-                    var commitSpec = { filename : file.name + ".sdiff", chunks : chunks, relativeTo: sigurl, expectedSize : size, control : { csv : { action: "replace" } } };
+                    var commitSpec = { filename : file.name + ".sdiff", chunks : chunks, relativeTo: sigurl, expectedSize : size, control : controlFile };
                     // TODO errors
                     $.ajax({ type: "POST", url: commitUrl, data: JSON.stringify(commitSpec), dataType: "json", headers: authHeaders }).done(function(resp) {
                         watchProgress(statusUrlBase + "/" + resp.jobId + ".txt", logUrlBase + "/" + resp.jobId + ".txt", authHeaders);
