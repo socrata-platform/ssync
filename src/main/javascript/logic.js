@@ -373,6 +373,13 @@ function findSig(base, authHeaders, cont) {
     });
 }
 
+$(document).ready(function() {
+    var ff = localStorage.getItem("fourfour");
+    if(ff !== null) $("#fourfour").val(ff);
+    var cf = localStorage.getItem("control");
+    if(cf !== null) $("#control").val(cf);
+});
+
 function go() {
     // $("#go").prop("disabled", true);
     $("#log").empty();
@@ -380,9 +387,10 @@ function go() {
     $("#message").empty();
     var file = $("#input")[0].files[0];
     var ff = $("#fourfour").val();
+    var controlFileRaw = $("#control").val();
     var controlFile = undefined;
     try {
-        controlFile = JSON.parse($("#control").val());
+        controlFile = JSON.parse(controlFileRaw);
     } catch (e) {
         if(e instanceof SyntaxError) {
             msg("Invalid control file: " + e.message);
@@ -390,6 +398,8 @@ function go() {
         }
         throw e;
     }
+    localStorage.setItem("fourfour", ff);
+    localStorage.setItem("control", controlFileRaw);
     var datasyncBase = "/datasync"
     var versionUrl = datasyncBase + "/version.json"
     var datasetBase = datasyncBase + "/id/" + ff
