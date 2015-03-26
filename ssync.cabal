@@ -23,12 +23,18 @@ executable ssync
                    , SSync.Hash
                    , SSync.RollingChecksum
                    , SSync.SimpleQueue
+                   , SSync.Util.Cereal
   build-depends:     attoparsec >=0.12.1.0 && <0.13
                    , base >=4.7 && <4.8
+                   , base16-bytestring >=0.1.1.6 && <0.2
                    , byteable >=0.1.0 && <0.2
                    , bytestring >=0.10 && <0.11
+                   , conduit-combinators
                    , containers >= 0.5.5.1
+                   , cereal
+                   , cereal-conduit >= 0.7.2.3 && <0.8
                    , dlist
+                   , exceptions >= 0.6.1 && < 0.7
                    , mono-traversable
                    , mtl == 2.2.1
                    , primitive >= 0.5.3.0
@@ -50,13 +56,10 @@ executable ssync
      cpp-options: -DSTUPID_HASH -DSTUPID_VECT -DGHCJS_BROWSER
      build-depends: Crypto == 4.2.5.1
                   , pureMD5 == 2.1.2.1
-                  , cereal
                   , ghcjs-base
                   , stm
                   , conduit-extra
-                  , conduit-combinators
-     other-modules: SSync.StupidHash
   if !impl(ghcjs)
      build-depends: cryptohash >=0.11.6 && <0.12
-     other-modules: SSync.DecentHash
+                  , system-filepath >=0.4.13.1 && <0.5
   ghc-prof-options: -fprof-auto "-with-rtsopts=-p -s -h -i0.1"

@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, RankNTypes, ScopedTypeVariables, DeriveDataTypeable, BangPatterns, RecordWildCards, NamedFieldPuns, MultiWayIf, LambdaCase, OverloadedStrings #-}
+ {-# LANGUAGE CPP, RankNTypes, ScopedTypeVariables, DeriveDataTypeable, BangPatterns, RecordWildCards, NamedFieldPuns, MultiWayIf, LambdaCase, OverloadedStrings #-}
 
 module SSync.SignatureTable (
   SignatureTable
@@ -6,10 +6,11 @@ module SSync.SignatureTable (
 , stBlockSize
 , stBlockSizeI
 , stStrongAlg
-, signatureTableParser
 , findBlock
 , strongHashComputer
 , emptySignature
+, consumeSignatureTable
+, SignatureTableException(..)
 ) where
 
 import SSync.Hash
@@ -29,16 +30,24 @@ import Data.Foldable
 import Data.Bits
 import Control.Monad.Trans
 import Data.Monoid
+import Control.Applicative ((<$>), (<*>))
 import qualified Data.Sequence as Seq
-import Data.Attoparsec.ByteString (Parser)
-import qualified Data.Attoparsec.ByteString as AP
 import qualified Data.ByteString as BS
 import Data.ByteString (ByteString)
-import Data.Word (Word8, Word32)
+import Data.Word (Word32)
 import Control.Monad (unless, when)
 import Data.Text.Encoding (decodeUtf8)
 import Data.Text (Text)
 import Control.Monad.ST
+import Data.Serialize.Get (Get, getWord8, getWord32be, getByteString)
+import qualified Data.Serialize.Get as G
+import SSync.Util.Cereal (getVarInt, MalformedVarInt(MalformedVarInt))
+import Conduit
+import Data.Conduit.Cereal (sinkGet, GetException)
+import Data.Typeable (Typeable)
+import Control.Exception (Exception, throw)
+import Control.Monad.Catch (MonadCatch, catch)
+import Data.Maybe (fromMaybe)
 
 #ifdef TRACING
 import qualified Debug.Trace as DT
@@ -53,64 +62,32 @@ type PVI = PV.Vector
 type PVI = PV.Vector Int
 #endif
 
-shortStringNoCS :: Parser Text
-shortStringNoCS = do
-  len <- AP.anyWord8
-  bs <- AP.take $ fromIntegral len
+data SignatureTableException = UnexpectedEOF
+                               -- ^ The signature file was truncated.
+                             | MalformedInteger
+                               -- ^ A variable-length number was longer than 10 bytes.
+                             | UnknownChecksum Text
+                               -- ^ The checksum algorithm specified in the signature file is unknown.
+                             | UnknownStrongHash Text
+                               -- ^ The strong hash algorithm specified in the signature file is unknown.
+                             | ChecksumMismatch
+                               -- ^ The signature file had an invalid checksum.
+                             | ExpectedEOF
+                               -- ^ There was data after the signature file's checksum.
+                             | InvalidBlockSize Word32
+                               -- ^ The block size specified in the signature file was too large.
+                             | InvalidMaxSignatureBlockSize Word32
+                               -- ^ The maximum size of a signature block in the signature file was too large.
+                             | InvalidSignatureBlockSize Word32
+                               -- ^ The size of a signature block was larger than the file's specified maximum.
+                             deriving (Show, Typeable)
+instance Exception SignatureTableException
+
+getShortString :: Get Text
+getShortString = do
+  len <- getWord8
+  bs <- getByteString $ fromIntegral len
   return $ decodeUtf8 bs
-
-bytesNoCS :: Int -> Parser ByteString
-bytesNoCS = AP.take
-
-varInt :: HashT Parser Word32
-varInt = do -- we want to take at most 10 bytes stopping at the first one without the MSB set
-  bsRaw <- lift takeVarIntBytes
-  update bsRaw
-  return $ intify bsRaw
-
-int4 :: HashT Parser Word32
-int4 = do -- we want to take at most 10 bytes stopping at the first one without the MSB set
-  bs <- lift $ AP.take 4
-  update bs
-  return $ (fromIntegral (BS.index bs 0) `shiftL` 24) .|. (fromIntegral (BS.index bs 1) `shiftL` 16) .|. (fromIntegral (BS.index bs 2) `shiftL` 8) .|. (fromIntegral (BS.index bs 3))
-
-intify :: ByteString -> Word32
-intify bsRaw =
-  let bs = BS.take 5 bsRaw
-  in BS.foldr (\w acc -> (acc `shiftL` 7) .|. (fromIntegral w .&. 0x7f)) 0 bs
-
-takeVarIntBytes :: Parser ByteString
-takeVarIntBytes = AP.scan 0 step >>= checkVAB
-  where step :: Int -> Word8 -> Maybe Int
-        step (-1) _ = Nothing
-        step 9 _ = Nothing
-        step n b = if b .&. 0x80 == 0
-                   then Just (-1)
-                   else Just (n + 1)
-        checkVAB bs = do
-          if BS.null bs
-            then AP.anyWord8 >> return bs -- at EOF; force an error
-            else do
-              unless (BS.last bs .&. 0x80 == 0) $ fail $ "malformed varint " ++ show bs
-              return bs
-
-shortString :: HashT Parser Text
-shortString = do
-  len <- anyWord8_h
-  bs <- take_h $ fromIntegral len
-  return $ decodeUtf8 bs
-
-anyWord8_h :: HashT Parser Word8
-anyWord8_h = do
-  b <- lift AP.anyWord8
-  update $ BS.singleton b
-  return b
-
-take_h :: Int -> HashT Parser ByteString
-take_h n = do
-  bs <- lift $ AP.take n
-  update bs
-  return bs
 
 maxBlockSize :: Word32
 maxBlockSize = 10*1024*1024
@@ -125,7 +102,7 @@ data BlockSpec = BlockSpec { bsEntry :: {-# UNPACK #-} !Word32
 
 data SignatureTable = ST { stBlockSize :: {-# UNPACK #-} !Word32 -- \ The same, but sometime's it's more
                          , stBlockSizeI :: {-# UNPACK #-} !Int   -- / convenient to have one than the other
-                         , stStrongAlg :: !Text
+                         , stStrongAlg :: !HashAlgorithm
                          , stBlocks :: !(V.Vector BlockSpec)
                          -- ^ BlockSpecs ordered by (weak16 checksum,
                          -- checksum, entry)
@@ -148,7 +125,7 @@ smallify ST{..} =
 emptySignature :: SignatureTable
 emptySignature = ST { stBlockSize = maxBlockSize
                     , stBlockSizeI = fromIntegral maxBlockSize
-                    , stStrongAlg = "MD5"
+                    , stStrongAlg = MD5
                     , stBlocks = V.empty
                     , stChecksumLookup = PV.create $ do
                         v <- MPV.new $ 1 `shiftL` 17
@@ -156,26 +133,24 @@ emptySignature = ST { stBlockSize = maxBlockSize
                         return v
                     }
 
-receiveBlock :: Int -> Word32 -> HashT Parser BlockSpec
-receiveBlock hashSize n = do
-  check <- int4
-  strong <- take_h hashSize
+getBlock :: Int -> Word32 -> Get BlockSpec
+getBlock hashSize n = do
+  check <- getWord32be
+  strong <- getByteString hashSize
   return $ BlockSpec n check strong
 
-receiveBlocks :: Word32 -> Int -> (Seq.Seq BlockSpec) -> HashT Parser (Seq.Seq BlockSpec)
-receiveBlocks maxSigs hashSize !pfx = do
-  sigsThisBlock <- varInt
-  when (sigsThisBlock > maxSigs) $ lift $ fail "invalid signature block size"
+getBlocks :: Word32 -> Int -> Seq.Seq BlockSpec -> Get (Seq.Seq BlockSpec)
+getBlocks maxSigs hashSize !pfx = do
+  sigsThisBlock <- getVarInt
+  when (sigsThisBlock > maxSigs) $ throw (InvalidSignatureBlockSize sigsThisBlock)
   if sigsThisBlock == 0
     then return pfx
     else do
       let startBlock = fromIntegral $ Seq.length pfx
-      blocks <- Seq.fromList `fmap` sequence (map (receiveBlock hashSize) [startBlock .. startBlock + sigsThisBlock - 1])
+      blocks <- Seq.fromList `fmap` sequence (map (getBlock hashSize) [startBlock .. startBlock + sigsThisBlock - 1])
       if sigsThisBlock == maxSigs
-        then
-          receiveBlocks maxSigs hashSize (pfx <> blocks)
-        else
-          return (pfx <> blocks)
+        then getBlocks maxSigs hashSize (pfx <> blocks)
+        else return (pfx <> blocks)
 
 copyToVector :: Seq.Seq a -> forall s. ST s (MV.STVector s a)
 copyToVector xs = do
@@ -214,37 +189,72 @@ indexBlocks blocks =
           loop afterChunk
     loop 0
 
-signatureTableParser :: Parser SignatureTable
-signatureTableParser = do
-  checksumAlg <- shortStringNoCS
-  (st, d) <- withHashM checksumAlg $ do
-    blockSize <- varInt
-    when (blockSize > maxBlockSize) $ fail "invalid block size"
-    strongHashAlg <- shortString
-    strongHashSize <- withHashM strongHashAlg digestSize
-    sigsPerBlock <- varInt
-    when (sigsPerBlock > maxSignatureBlockSize) $ lift $ fail "invalid max signature block size"
-    blocksUnsorted <- receiveBlocks sigsPerBlock strongHashSize Seq.empty
-    let blocksSorted = V.create $ do
-          -- ok, we have a 'Seq BlockSpec' and we want a sorted 'MVector BlockSpec'
-          v <- copyToVector blocksUnsorted
-          MV.sortBy checksums v
-          return v
-        blocksIndexed = indexBlocks blocksSorted
-    d <- digest
-    return (ST blockSize (fromIntegral blockSize) strongHashAlg blocksSorted blocksIndexed, d)
-  checksum <- bytesNoCS $ BS.length d
-  unless (d == checksum) $ fail "checksum mismatch"
-  AP.peekWord8 >>= \case
-    Nothing -> return st
-    Just _ -> fail "Expected EOF"
+getSignatureTable :: Get SignatureTable
+getSignatureTable = do
+  blockSize <- getVarInt
+  when (blockSize > maxBlockSize) $ throw (InvalidBlockSize blockSize)
+  strongHashAlgName <- getShortString
+  case forName strongHashAlgName of
+   Nothing ->
+     throw $ UnknownStrongHash strongHashAlgName
+   Just strongHashAlg -> do
+     let strongHashSize = digestSize strongHashAlg
+     sigsPerBlock <- getVarInt
+     when (sigsPerBlock > maxSignatureBlockSize) $ throw (InvalidMaxSignatureBlockSize sigsPerBlock)
+     blocksUnsorted <- getBlocks sigsPerBlock strongHashSize Seq.empty
+     let blocksSorted = V.create $ do
+           v <- copyToVector blocksUnsorted
+           MV.sortBy checksums v
+           return v
+         blocksIndexed = indexBlocks blocksSorted
+     return $ ST blockSize (fromIntegral blockSize) strongHashAlg blocksSorted blocksIndexed
+
+consumeAndHash :: forall m o a. (Monad m) => Get a -> HashT (ConduitM ByteString o m) a
+consumeAndHash = continue . G.runGetPartial
+  where continue f = do
+          bs <- fromMaybe BS.empty <$> lift awaitNonEmpty
+          (loop <*> f) bs
+        loop :: ByteString -> G.Result a -> HashT (ConduitM ByteString o m) a
+        loop _ (G.Fail _ _) = throw UnexpectedEOF
+        loop bs (G.Partial f) = do
+          updateS bs
+          continue f
+        loop bs (G.Done r l) = do
+          updateS $ dropRight (BS.length l) bs
+          lift $ leftover l
+          return r
+
+awaitNonEmpty :: (Monad m) => Consumer ByteString m (Maybe ByteString)
+awaitNonEmpty = await >>= \case
+  Just bs | BS.null bs -> awaitNonEmpty
+  other -> return other
+
+dropRight :: Int -> ByteString -> ByteString
+dropRight n bs = BS.take (BS.length bs - n) bs
+
+consumeSignatureTable :: (MonadCatch m, Monad m) => Consumer ByteString m SignatureTable
+consumeSignatureTable = do
+  checksumAlgName <- sinkGet getShortString `catch` (\(_ :: GetException) -> throwM UnexpectedEOF)
+  case forName checksumAlgName of
+   Nothing ->
+     throwM $ UnknownChecksum checksumAlgName
+   Just checksumAlg -> do
+     (st, d) <- withHashT checksumAlg $ do
+       st <- consumeAndHash getSignatureTable `catch` (\MalformedVarInt -> throwM MalformedInteger)
+       d <- digestS
+       return (st, d)
+     checksum <- sinkGet (getByteString $ BS.length d) `catch` (\(_ :: GetException) -> throwM UnexpectedEOF)
+     unless (d == checksum) $ throwM ChecksumMismatch
+     awaitNonEmpty >>= \case
+       Nothing -> return st
+       Just _ -> throwM ExpectedEOF
 
 hash16 :: Word32 -> Int
 hash16 x = 0xffff .&. fromIntegral (x `xor` (x `shiftR` 16))
 {-# INLINE hash16 #-}
 
 strongHashComputer :: (Monad m) => SignatureTable -> (HashT m ByteString) -> m ByteString
-strongHashComputer st op = withHashM (stStrongAlg st) op
+strongHashComputer st op = withHashT (stStrongAlg st) op
 
 -- | Finds the preexisting block corresponding to the block with the
 -- given weak and strong hashes.  Note: this does not evaluate the

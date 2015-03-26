@@ -275,15 +275,14 @@ module Main where
 
 import System.Environment
 
-import qualified Data.Attoparsec.ByteString as AP
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Control.Monad.IO.Class
 import Data.Conduit
+import Conduit
 
 import SSync.SignatureTable
 import SSync.Patch
-
+import qualified Filesystem.Path.CurrentOS as FP
 
 main :: IO ()
 main = do
@@ -297,12 +296,11 @@ main = do
 
 go :: String -> String -> IO ()
 go dat sig = do
-  l <- AP.parseOnly signatureTableParser `fmap` BS.readFile sig >>= \(Right l) -> return l
+  l <- runResourceT $ sourceFile (FP.decodeString sig) $$ consumeSignatureTable
   print $ smallify l
   if True
     then do
-      bs <- BS.readFile dat
-      yield bs $$ patchComputer l $= (awaitForever $ liftIO . printChunk)
+      runResourceT $ sourceFile (FP.decodeString dat) $$ patchComputer l $= sinkNull -- (awaitForever $ liftIO . printChunk)
     else do
       bs <- BSL.readFile dat
       mapM_ yield (BSL.toChunks bs) $$ {- (awaitForever $ \b -> do { liftIO $ print $ BS.length b; yield b }) $= -} patchComputer l $= (awaitForever $ liftIO . printChunk)

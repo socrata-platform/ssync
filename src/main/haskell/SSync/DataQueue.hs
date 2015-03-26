@@ -148,10 +148,10 @@ addBlock (PolyChunk bs1 hd q bs2 tl) bs3 | atEnd' bs2 tl =
 
 hashBlock :: (Monad m) => DataQueue -> HashT m ByteString
 hashBlock (SingleChunk bs hd tl) = do
-  update $ BS.take (1 + tl - hd) $ BS.drop hd bs
-  digest
+  updateS $ BS.take (1 + tl - hd) $ BS.drop hd bs
+  digestS
 hashBlock (PolyChunk bs1 hd q bs2 tl) = do
-  update $ BS.drop hd bs1
-  forM_ (q2list q) update
-  update $ BS.take (tl+1) bs2
-  digest
+  updateS $ BS.drop hd bs1
+  forM_ (q2list q) updateS
+  updateS $ BS.take (tl+1) bs2
+  digestS
