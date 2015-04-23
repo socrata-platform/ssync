@@ -1,13 +1,26 @@
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveDataTypeable, LambdaCase, RankNTypes, ScopedTypeVariables #-}
 
-module SSync.Util.Cereal (getVarInt, putVarInt, MalformedVarInt(MalformedVarInt)) where
+module SSync.Util.Cereal (
+  getVarInt
+, putVarInt
+, MalformedVarInt(MalformedVarInt)
+, sinkGet'
+, consumeAndHash
+) where
 
+import SSync.Util (awaitNonEmpty, dropRight)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.Serialize
-import Control.Applicative ((<$>))
+import Control.Applicative ((<$>), (<*>))
 import Data.Word (Word32)
 import Data.Bits (shiftL, shiftR, (.|.), (.&.))
 import Data.Typeable (Typeable)
-import Control.Exception (throw, Exception)
+import Control.Exception (Exception)
+import Conduit
+import Control.Monad (unless)
+import Data.Maybe (fromMaybe)
+import SSync.Hash (HashT, updateS)
 
 -- | Thrown when 'getVarInt' fails to find a terminal byte within 10
 -- bytes.  Note: this is _not_ thrown if the end of input is reached
@@ -17,7 +30,9 @@ import Control.Exception (throw, Exception)
 -- give a better way to report machine-inspectable errors.
 data MalformedVarInt = MalformedVarInt
                      deriving (Eq, Show, Typeable)
-instance Exception MalformedVarInt
+-- instance Exception MalformedVarInt
+
+type VarIntResult = Either MalformedVarInt Word32
 
 -- $setup
 -- The code examples in this module require GHC's `OverloadedStrings`
@@ -43,7 +58,7 @@ instance Exception MalformedVarInt
 -- It is the inverse of putVarInt.
 --
 -- prop> runGet getVarInt (runPut $ putVarInt x) == Right x
-getVarInt :: Get Word32
+getVarInt :: Get VarIntResult
 getVarInt = next 0 (next 7 (next 14 (next 21 (next 28 (remainder 5))))) 0
 -- equivalent to
 --    foldr next (remainder 5) [0,7..28] 0
@@ -53,22 +68,22 @@ getIntegralByte :: Get Word32
 getIntegralByte = fromIntegral <$> getWord8
 {-# INLINE getIntegralByte #-}
 
-next :: Int -> (Word32 -> Get Word32) -> Word32 -> Get Word32
+next :: Int -> (Word32 -> Get VarIntResult) -> Word32 -> Get VarIntResult
 next o n v = do
   b <- getIntegralByte
   if b .&. 0x80 == 0
-    then return $ v .|. (b `shiftL` o)
+    then return $ Right $ v .|. (b `shiftL` o)
     else do
       let v' = v .|. ((b .&. 0x7f) `shiftL` o)
       n v'
 {-# INLINE next #-}
 
-remainder :: Int -> Word32 -> Get Word32
-remainder 0 _ = throw MalformedVarInt
+remainder :: Int -> Word32 -> Get VarIntResult
+remainder 0 _ = return $ Left MalformedVarInt
 remainder n r = do
   b <- getIntegralByte
   if b .&. 0x80 == 0
-    then return r
+    then return $ Right r
     else remainder (n-1) r
 
 -- | Encode a 'Word32' in the protobuf variable-length encoding.
@@ -85,3 +100,38 @@ putVarInt i =
   else do
     putWord8 $ fromIntegral (i .|. 0x80)
     putVarInt $ i `shiftR` 7
+
+sinkGet' :: (Monad m) => Get r -> Consumer ByteString m (Either String r)
+sinkGet' g = go (runGetPartial g)
+  where go step =
+          awaitNonEmpty >>= \case
+            Just chunk ->
+              handle step chunk go
+            Nothing ->
+              handle step BS.empty (const $ return $ Left "Unexpected EOF")
+        handle step block recur =
+          case step block of
+            Done r leftovers -> do
+              unless (BS.null leftovers) $ leftover leftovers
+              return $ Right r
+            Partial cont ->
+              recur cont
+            Fail msg _ ->
+              return $ Left msg
+
+consumeAndHash :: forall m o a e. (MonadThrow m, Exception e) => e -> Get (Either e a) -> HashT (ConduitM ByteString o m) a
+consumeAndHash eofError = continue . runGetPartial
+  where continue f = do
+          bs <- fromMaybe BS.empty <$> lift awaitNonEmpty
+          (loop <*> f) bs
+        loop :: ByteString -> Result (Either e a) -> HashT (ConduitM ByteString o m) a
+        loop _ (Fail _ _) = throwM eofError
+        loop bs (Partial f) = do
+          updateS bs
+          continue f
+        loop _ (Done (Left e) _) =
+          throwM e
+        loop bs (Done (Right r) l) = do
+          updateS $ dropRight (BS.length l) bs
+          lift $ leftover l
+          return r

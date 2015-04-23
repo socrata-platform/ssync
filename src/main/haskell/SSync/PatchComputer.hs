@@ -1,13 +1,14 @@
-{-# LANGUAGE RankNTypes, GADTs, BangPatterns #-}
+{-# LANGUAGE RankNTypes, GADTs, BangPatterns, ViewPatterns #-}
 {-# LANGUAGE ScopedTypeVariables, LambdaCase, NamedFieldPuns, OverloadedStrings #-}
 
-module SSync.Patch (patchComputer, Chunk(..)) where
+module SSync.PatchComputer (patchComputer, patchComputer', Chunk(..)) where
 
 import qualified Data.DList as DL
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as BSL
-import Data.Conduit
+import Conduit
 import Data.Word
 import Data.Monoid
 import Control.Monad.Identity
@@ -15,12 +16,9 @@ import Control.Monad.Identity
 import SSync.SignatureTable
 import qualified SSync.RollingChecksum as RC
 import qualified SSync.DataQueue as DQ
-import SSync.Hash (HashT)
-
-data Chunk = Block Word32
-           | Data BSL.ByteString
-           | End
-             deriving (Show)
+import SSync.Hash
+import SSync.Util
+import SSync.Chunk
 
 data SizedBuilder = SizedBuilder (DL.DList ByteString) {-# UNPACK #-} !Int
 sbEmpty :: SizedBuilder
@@ -38,19 +36,57 @@ atLeastBlockSizeOrEnd target pfx = go (DL.singleton pfx) (BS.length pfx)
               Nothing -> return $ mconcat $ DL.toList sb
               Just bs -> go (DL.snoc sb bs) (len + BS.length bs)
 
-awaitNonEmpty :: (Monad m) => Consumer ByteString m (Maybe ByteString)
-awaitNonEmpty = await >>= \case
-  Just bs | BS.null bs -> awaitNonEmpty
-          | otherwise -> return $ Just bs
-  Nothing -> return Nothing
+-- | A signature file is a short-string header naming the checksum
+-- algorithm, followed by the block size as a varint, followed by all
+-- the chunks, followed by 255 (or equivalently an "END" chunk),
+-- followed by the checksum of the chunk data.
+--
+-- A BLOCK chunk is a 0 byte followed by the number of the referenced
+-- block encoded as a varint.
+--
+-- A DATA chunk is a 1 byte followed by the length of the data as a
+-- varint, followed by the bytes of the data.
+--
+-- An END chunk is a 255 byte and must occur exactly once, at the end
+-- of the chunk stream.
+fromChunks :: (Monad m) => Word32 -> Conduit Chunk m ByteString
+fromChunks blockSize = do
+  yield "\003MD5"
+  checksum <- withHashT MD5 $ do
+    let loop i acc | i > 1000 = do
+                       flush acc
+                       loop 0 mempty
+                   | otherwise =
+                       lift await >>= \case
+                         Just (Block n) ->
+                           loop (i+1) $ acc <> BS.word8 0 <> encodeVarInt n
+                         Just (Data d) -> do
+                           flush $ acc <> BS.word8 1 <> encodeVarInt (fromIntegral $ BSL.length d) <> BS.lazyByteString d
+                           loop 0 mempty
+                         Nothing -> do
+                           flush $ acc <> BS.word8 255
+                           digestS
+        flush builder = do
+          let chunks = BSL.toChunks $ BS.toLazyByteString builder
+          mapM_ updateS chunks
+          lift $ mapM_ yield chunks
+    loop (0 :: Int) (encodeVarInt blockSize)
+  yield checksum
 
-patchComputer :: (Monad m) => SignatureTable -> Conduit ByteString m Chunk
-patchComputer st = go
+-- | Given a 'SignatureTable', convert a stream of 'ByteString's into
+-- a signature file.
+patchComputer :: (Monad m) => SignatureTable -> Conduit ByteString m ByteString
+patchComputer st = patchComputer' st $= fromChunks (stBlockSize st)
+
+-- | Given a 'SignatureTable', convert a stream of 'ByteString's into
+-- a stream of patch 'Chunk's.  Use 'patchComputer' to produce an
+-- actual signature file instead.
+patchComputer' :: (Monad m) => SignatureTable -> Conduit ByteString m Chunk
+patchComputer' st = go
   where go = do
           initBS <- atLeastBlockSizeOrEnd blockSizeI ""
           sb <- fromChunk initBS sbEmpty
           yieldData sb
-          yield End
         fromChunk initBS sb =
           if (BS.null initBS)
           then return sb
@@ -143,7 +179,7 @@ yieldData (SizedBuilder pendingL pendingS) =
     let bytes = BSL.fromChunks $ DL.toList pendingL
     yield $ Data bytes
 
-addData :: (Monad m) => Int ->ByteString -> SizedBuilder -> ConduitM a Chunk m SizedBuilder
+addData :: (Monad m) => Int -> ByteString -> SizedBuilder -> ConduitM a Chunk m SizedBuilder
 addData blockSize bs sb@(SizedBuilder pendingL pendingS) =
   if BS.null bs
   then return sb

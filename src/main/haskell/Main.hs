@@ -276,16 +276,47 @@ module Main where
 import System.Environment
 
 import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString as BS
 import Control.Monad.IO.Class
 import Data.Conduit
 import Conduit
 
 import SSync.SignatureTable
-import SSync.Patch
+import SSync.SignatureComputer
+import SSync.PatchComputer
+import SSync.PatchApplier
+import SSync.Hash
+import SSync.BlockSize
 import qualified Filesystem.Path.CurrentOS as FP
+
+import Data.Serialize.Get (runGet)
+import SSync.Util.Cereal (getVarInt)
 
 main :: IO ()
 main = do
+  -- print $ runGet getVarInt "\xa9\xb9\x9f\x05"
+  -- print $ runGet getVarInt "\xbd\x84\xb4\x8f\xc5\x29"
+
+  let toOverwrite = BS.concat (replicate 100001 "abcdefghijklmnopqrs")
+      with = "abcdeqabcdefghijglksfghijdfjglkdfjsgkldjfgabcdeklgfdsjgldfjfghiabcdefghijklmnopqrs"
+      chunks "" = []
+      chunks bs = let (a, b) = BS.splitAt 200 bs
+                  in a : chunks b
+      chunkFinder bs num = let start = (fromIntegral bs) * num
+                           in if start < fromIntegral (BS.length toOverwrite)
+                              then do
+                                let chunk = BS.take bs $ BS.drop (fromIntegral start) toOverwrite
+                                putStrLn $ "returning chunk #" ++ show num ++ ": " ++ show chunk
+                                return $ Just chunk
+                              else do
+                                putStrLn "chunk not found :("
+                                return Nothing
+  yieldMany (chunks toOverwrite) $$ produceSignatureTable MD5 MD5 (blockSize' 1024) $= awaitForever (liftIO . print . BS.length)
+  st <- yieldMany (chunks toOverwrite) $$ produceSignatureTable MD5 MD5 (blockSize' 10) $= consumeSignatureTable
+  yield with $$ patchComputer' st $= awaitForever (liftIO . print)
+  xs <- yield with $$ patchComputer st $= patchApplier chunkFinder $= sinkList
+  print xs
+
   args <- getArgs
   case args of
    [dat, sig] ->
@@ -300,10 +331,10 @@ go dat sig = do
   print $ smallify l
   if True
     then do
-      runResourceT $ sourceFile (FP.decodeString dat) $$ patchComputer l $= sinkNull -- (awaitForever $ liftIO . printChunk)
+      runResourceT $ sourceFile (FP.decodeString dat) $$ patchComputer' l $= sinkNull -- (awaitForever $ liftIO . printChunk)
     else do
       bs <- BSL.readFile dat
-      mapM_ yield (BSL.toChunks bs) $$ {- (awaitForever $ \b -> do { liftIO $ print $ BS.length b; yield b }) $= -} patchComputer l $= (awaitForever $ liftIO . printChunk)
+      mapM_ yield (BSL.toChunks bs) $$ {- (awaitForever $ \b -> do { liftIO $ print $ BS.length b; yield b }) $= -} patchComputer' l $= (awaitForever $ liftIO . printChunk)
 
 printChunk :: (MonadIO m) => Chunk -> m ()
 printChunk (Data bytes) =  liftIO $ putStrLn $ "Data " ++ show (BSL.length bytes)

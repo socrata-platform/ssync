@@ -3,6 +3,7 @@
 module SSync.Hash (
   forName
 , HashAlgorithm(..)
+, HashState
 , HashT
 , withHashT
 , initState
@@ -14,6 +15,7 @@ module SSync.Hash (
 , digestSizeS
 , hexString
 , withHashState
+, withHashState'
 ) where
 
 import Data.ByteString (ByteString)
@@ -140,3 +142,9 @@ withHashState act = do
   (s1, res) <- lift $ act s0
   put s1
   return res
+
+withHashState' :: (Monad m) => (HashState -> m HashState) -> HashT m ()
+withHashState' act = do
+  s0 <- get
+  s1 <- lift $ act s0
+  put s1

@@ -18,11 +18,13 @@ cabal-version:       >=1.10
 executable ssync
   Main-is: Main.hs
   other-modules:     SSync.SignatureTable
-                   , SSync.Patch
+                   , SSync.PatchApplier
+                   , SSync.PatchComputer
                    , SSync.DataQueue
                    , SSync.Hash
                    , SSync.RollingChecksum
                    , SSync.SimpleQueue
+                   , SSync.Util
                    , SSync.Util.Cereal
   build-depends:     attoparsec >=0.12.1.0 && <0.13
                    , base >=4.7 && <4.8
