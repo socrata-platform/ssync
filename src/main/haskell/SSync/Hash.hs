@@ -110,7 +110,7 @@ instance DigestSizable HashAlgorithm where
   digestSize = digestSize . initState
 
 -- this is deliberately non-opaque
-type HashT m r = StateT HashState m r
+type HashT = StateT HashState
 
 class HashInit a where
   startState :: a -> HashState
