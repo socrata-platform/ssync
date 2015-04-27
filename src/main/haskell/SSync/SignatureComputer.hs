@@ -56,14 +56,18 @@ sigs blockSize sigsPerBlock hashAlg = go 0 $ return ()
         rcZero = RC.init blockSize
         strongZero = initState hashAlg
 
+produceSignatureTableUnframed :: (Monad m) => HashAlgorithm -> BlockSize -> Conduit ByteString m ByteString
+produceSignatureTableUnframed strongHashAlg (blockSizeWord -> blockSize) = do
+  let sigBlockSize = signatureBlockSizeForBlockSize blockSize
+  produceVarInt blockSize
+  produceShortString (show strongHashAlg)
+  produceVarInt sigBlockSize
+  rechunk (fromIntegral blockSize) $= sigs blockSize sigBlockSize strongHashAlg
+
 produceSignatureTable :: (Monad m) => HashAlgorithm -> HashAlgorithm -> BlockSize -> Conduit ByteString m ByteString
-produceSignatureTable checksumAlg strongHashAlg (blockSizeWord -> blockSize) = do
+produceSignatureTable checksumAlg strongHashAlg blockSize = do
   produceShortString $ show checksumAlg
   d <- withHashT checksumAlg $ do
-    withHashState' $ \hs -> produceVarInt blockSize $= produceAndHash hs
-    withHashState' $ \hs -> produceShortString (show strongHashAlg) $= produceAndHash hs
-    let sigBlockSize = signatureBlockSizeForBlockSize blockSize
-    withHashState' $ \hs -> produceVarInt sigBlockSize $= produceAndHash hs
-    withHashState' $ \hs -> rechunk (fromIntegral blockSize) $= sigs blockSize sigBlockSize strongHashAlg $= produceAndHash hs
+    withHashState' $ \hs -> produceSignatureTableUnframed strongHashAlg blockSize $= produceAndHash hs
     digestS
   yield d
