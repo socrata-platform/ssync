@@ -286,7 +286,6 @@ import SSync.SignatureComputer
 import SSync.PatchComputer
 import SSync.PatchApplier
 import SSync.Hash
-import SSync.BlockSize
 import qualified Filesystem.Path.CurrentOS as FP
 
 main :: IO ()

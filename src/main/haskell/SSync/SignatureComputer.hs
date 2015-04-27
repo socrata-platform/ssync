@@ -2,6 +2,9 @@
 
 module SSync.SignatureComputer (
   produceSignatureTable
+, BlockSize
+, blockSize
+, blockSize'
 ) where
 
 import Conduit
@@ -17,7 +20,7 @@ import SSync.Hash
 import SSync.Util
 import SSync.Util.Cereal
 import SSync.Constants
-import SSync.BlockSize hiding (blockSize)
+import SSync.BlockSize
 import qualified SSync.RollingChecksum as RC
 
 produceAndHash :: (Monad m) => HashState -> ConduitM ByteString ByteString m HashState
@@ -35,11 +38,11 @@ produceVarInt = yield . runPut . putVarInt
 
 -- each signature-block represents as close to 1MB of source data as possible
 signatureBlockSizeForBlockSize :: Word32 -> Word32
-signatureBlockSizeForBlockSize blockSize = min (1 + ((1024*1024) `div` blockSize)) maxSignatureBlockSize
+signatureBlockSizeForBlockSize blockSz = min (1 + ((1024*1024) `div` blockSz)) maxSignatureBlockSize
 
 -- receives blocks of data, produces blocks of signatures
 sigs :: (Monad m) => Word32 -> Word32 -> HashAlgorithm -> Conduit ByteString m ByteString
-sigs blockSize sigsPerBlock hashAlg = go 0 $ return ()
+sigs blockSz sigsPerBlock hashAlg = go 0 $ return ()
   where go sigsSoFar sigData =
           if sigsSoFar == sigsPerBlock
           then do
@@ -53,21 +56,21 @@ sigs blockSize sigsPerBlock hashAlg = go 0 $ return ()
                 go (sigsSoFar + 1) (sigData >> putWord32be weak >> putByteString strong)
               Nothing ->
                 yield . runPut $ putVarInt sigsSoFar >> sigData
-        rcZero = RC.init blockSize
+        rcZero = RC.init blockSz
         strongZero = initState hashAlg
 
 produceSignatureTableUnframed :: (Monad m) => HashAlgorithm -> BlockSize -> Conduit ByteString m ByteString
-produceSignatureTableUnframed strongHashAlg (blockSizeWord -> blockSize) = do
-  let sigBlockSize = signatureBlockSizeForBlockSize blockSize
-  produceVarInt blockSize
+produceSignatureTableUnframed strongHashAlg (blockSizeWord -> blockSz) = do
+  let sigBlockSize = signatureBlockSizeForBlockSize blockSz
+  produceVarInt blockSz
   produceShortString (show strongHashAlg)
   produceVarInt sigBlockSize
-  rechunk (fromIntegral blockSize) $= sigs blockSize sigBlockSize strongHashAlg
+  rechunk (fromIntegral blockSz) $= sigs blockSz sigBlockSize strongHashAlg
 
 produceSignatureTable :: (Monad m) => HashAlgorithm -> HashAlgorithm -> BlockSize -> Conduit ByteString m ByteString
-produceSignatureTable checksumAlg strongHashAlg blockSize = do
+produceSignatureTable checksumAlg strongHashAlg blockSz = do
   produceShortString $ show checksumAlg
   d <- withHashT checksumAlg $ do
-    withHashState' $ \hs -> produceSignatureTableUnframed strongHashAlg blockSize $= produceAndHash hs
+    withHashState' $ \hs -> produceSignatureTableUnframed strongHashAlg blockSz $= produceAndHash hs
     digestS
   yield d
