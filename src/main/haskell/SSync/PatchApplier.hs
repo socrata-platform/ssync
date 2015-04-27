@@ -18,7 +18,7 @@ import Control.Exception (Exception)
 import Data.Typeable (Typeable)
 
 import Conduit
-import Data.Serialize.Get (Get, getWord8, getByteString, getLazyByteString)
+import Data.Serialize.Get (Get, getWord8, getBytes)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -60,7 +60,7 @@ patchApplier chunkProvider = orThrow $ do
     let blockSizeI = fromIntegral blockSize -- we know it'll fit in an Int now
     process blockSize (chunkProvider blockSizeI)
     digestS
-  actualDigest <- withExceptT fixupEOF $ ExceptT (sinkGet' $ getByteString $ BS.length expectedDigest)
+  actualDigest <- withExceptT fixupEOF $ ExceptT (sinkGet' $ getBytes $ BS.length expectedDigest)
   when (expectedDigest /= actualDigest) $ do
     throwError ChecksumMismatch
   lift awaitNonEmpty >>= \case
@@ -93,7 +93,7 @@ getChunk blockSize =
     1 -> do
       len <- getVarInt
       when (len > blockSize) $ throwError (DataBlockTooLarge len)
-      Just . Data <$> lift (getLazyByteString (fromIntegral len))
+      Just . Data <$> lift (G.getLazyBytes (fromIntegral len))
     255 ->
       return Nothing
     other ->

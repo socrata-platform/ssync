@@ -7,11 +7,14 @@ module SSync.Util.Cereal (
 , sinkGet'
 , consumeAndHash
 , getShortString
+, getLazyBytes
 ) where
 
 import SSync.Util (awaitNonEmpty, dropRight)
 import Data.ByteString (ByteString)
+import qualified Data.DList as DL
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import Data.Serialize
 import Control.Applicative ((<$>), (<*>))
 import Data.Text (Text)
@@ -139,5 +142,21 @@ consumeAndHash eofError = ExceptT . (continue . runGetPartial) . runExceptT
 getShortString :: Get Text
 getShortString = do
   len <- getWord8
-  bs <- getByteString $ fromIntegral len
+  bs <- getBytes $ fromIntegral len
   return $ decodeUtf8 bs
+
+-- Cereal's getLazyByteString actually produces a single chunk; we'll
+-- postpone reconstitution until later.  This is named via analogy with
+-- getBytes / getByteString; getLazyBytes doesn't copy.
+getLazyBytes :: Int -> Get BSL.ByteString
+getLazyBytes n = BSL.fromChunks <$> loop n DL.empty
+  where loop want acc = do
+          available <- remaining
+          if available >= want
+            then do
+              finalAcc <- DL.snoc acc <$> getBytes want
+              return $ DL.toList finalAcc
+            else do
+              acc' <- DL.snoc acc <$> getBytes available
+              _ <- lookAhead getWord8 -- ensure the next chunk is available
+              loop (want - available) acc'

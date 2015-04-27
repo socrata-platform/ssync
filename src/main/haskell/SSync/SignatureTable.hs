@@ -41,7 +41,7 @@ import Data.Word (Word32)
 import Control.Monad (unless, when)
 import Data.Text (Text)
 import Control.Monad.ST
-import Data.Serialize.Get (Get, getWord32be, getByteString)
+import Data.Serialize.Get (Get, getWord32be, getBytes)
 import SSync.Util.Cereal (MalformedVarInt(MalformedVarInt), sinkGet')
 import Conduit
 import Data.Typeable (Typeable)
@@ -129,7 +129,7 @@ emptySignature' bs = ST { stBlockSize = bs
 getBlock :: Int -> Word32 -> Get BlockSpec
 getBlock hashSize n = do
   check <- getWord32be
-  strong <- getByteString hashSize
+  strong <- getBytes hashSize
   return $ BlockSpec n check strong
 
 getBlocks :: Word32 -> Int -> Seq.Seq BlockSpec -> ExceptT SignatureTableException Get (Seq.Seq BlockSpec)
@@ -216,7 +216,7 @@ consumeSignatureTable = orThrow $ do
     st <- consumeAndHash getSignatureTable
     d <- lift digestS
     return (st, d)
-  checksum <- withExceptT fixupEOF $ ExceptT (sinkGet' $ getByteString $ BS.length d)
+  checksum <- withExceptT fixupEOF $ ExceptT (sinkGet' $ getBytes $ BS.length d)
   unless (d == checksum) $ throwError ChecksumMismatch
   lift awaitNonEmpty >>= \case
     Nothing -> return st

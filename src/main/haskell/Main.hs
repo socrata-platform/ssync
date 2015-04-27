@@ -289,9 +289,6 @@ import SSync.Hash
 import SSync.BlockSize
 import qualified Filesystem.Path.CurrentOS as FP
 
-import Data.Serialize.Get (runGet)
-import SSync.Util.Cereal (getVarInt)
-
 main :: IO ()
 main = do
   -- print $ runGet getVarInt "\xa9\xb9\x9f\x05"
@@ -299,9 +296,9 @@ main = do
 
   let toOverwrite = BS.concat (replicate 100001 "abcdefghijklmnopqrs")
       with = "abcdeqabcdefghijglksfghijdfjglkdfjsgkldjfgabcdeklgfdsjgldfjfghiabcdefghijklmnopqrs"
-      chunks "" = []
-      chunks bs = let (a, b) = BS.splitAt 200 bs
-                  in a : chunks b
+      chunks _ "" = []
+      chunks n bs = let (a, b) = BS.splitAt n bs
+                    in a : chunks n b
       chunkFinder bs num = let start = (fromIntegral bs) * num
                            in if start < fromIntegral (BS.length toOverwrite)
                               then do
@@ -311,10 +308,15 @@ main = do
                               else do
                                 putStrLn "chunk not found :("
                                 return Nothing
-  yieldMany (chunks toOverwrite) $$ produceSignatureTable MD5 MD5 (blockSize' 1024) $= awaitForever (liftIO . print . BS.length)
-  st <- yieldMany (chunks toOverwrite) $$ produceSignatureTable MD5 MD5 (blockSize' 10) $= consumeSignatureTable
+      sigProducer = produceSignatureTable MD5 MD5 (blockSize' 10)
+  putStrLn "Begin: signature table chunk sizes"
+  yieldMany (chunks 200 toOverwrite) $$ sigProducer $= awaitForever (liftIO . print . BS.length)
+  putStrLn "End: signatureTable chunk sizes"
+  st <- yieldMany (chunks 200 toOverwrite) $$ sigProducer $= consumeSignatureTable
+  putStrLn "Begin: patch"
   yield with $$ patchComputer' st $= awaitForever (liftIO . print)
-  xs <- yield with $$ patchComputer st $= patchApplier chunkFinder $= sinkList
+  putStrLn "End: patch"
+  xs <- yieldMany (chunks 1024 with) $$ patchComputer st $= patchApplier chunkFinder $= sinkList
   print xs
 
   args <- getArgs
