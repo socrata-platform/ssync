@@ -17,12 +17,16 @@ cabal-version:       >=1.10
 
 executable ssync
   Main-is: Main.hs
-  other-modules:     SSync.SignatureTable
-                   , SSync.PatchApplier
-                   , SSync.PatchComputer
+  other-modules:     SSync.BlockSize
+                   , SSync.Chunk
+                   , SSync.Constants
                    , SSync.DataQueue
                    , SSync.Hash
+                   , SSync.PatchApplier
+                   , SSync.PatchComputer
                    , SSync.RollingChecksum
+                   , SSync.SignatureComputer
+                   , SSync.SignatureTable
                    , SSync.SimpleQueue
                    , SSync.Util
                    , SSync.Util.Cereal
@@ -55,6 +59,9 @@ executable ssync
                   , Response
                   , TSBQueue
                   , Types
+                  , SSync.JSVector
+                  , SSync.JSVectorM
+                  , SSync.JSVector.Internal
      cpp-options: -DSTUPID_HASH -DSTUPID_VECT -DGHCJS_BROWSER
      build-depends: Crypto == 4.2.5.1
                   , pureMD5 == 2.1.2.1

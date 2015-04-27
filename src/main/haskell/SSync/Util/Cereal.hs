@@ -6,6 +6,7 @@ module SSync.Util.Cereal (
 , MalformedVarInt(MalformedVarInt)
 , sinkGet'
 , consumeAndHash
+, getShortString
 ) where
 
 import SSync.Util (awaitNonEmpty, dropRight)
@@ -13,14 +14,16 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Serialize
 import Control.Applicative ((<$>), (<*>))
+import Data.Text (Text)
+import Data.Text.Encoding (decodeUtf8)
 import Data.Word (Word32)
 import Data.Bits (shiftL, shiftR, (.|.), (.&.))
 import Data.Typeable (Typeable)
-import Control.Exception (Exception)
 import Conduit
 import Control.Monad (unless)
 import Data.Maybe (fromMaybe)
 import SSync.Hash (HashT, updateS)
+import Control.Monad.Except (ExceptT(..), throwError, runExceptT)
 
 -- | Thrown when 'getVarInt' fails to find a terminal byte within 10
 -- bytes.  Note: this is _not_ thrown if the end of input is reached
@@ -30,9 +33,6 @@ import SSync.Hash (HashT, updateS)
 -- give a better way to report machine-inspectable errors.
 data MalformedVarInt = MalformedVarInt
                      deriving (Eq, Show, Typeable)
--- instance Exception MalformedVarInt
-
-type VarIntResult = Either MalformedVarInt Word32
 
 -- $setup
 -- The code examples in this module require GHC's `OverloadedStrings`
@@ -58,7 +58,7 @@ type VarIntResult = Either MalformedVarInt Word32
 -- It is the inverse of putVarInt.
 --
 -- prop> runGet getVarInt (runPut $ putVarInt x) == Right x
-getVarInt :: Get VarIntResult
+getVarInt :: ExceptT MalformedVarInt Get Word32
 getVarInt = next 0 (next 7 (next 14 (next 21 (next 28 (remainder 5))))) 0
 -- equivalent to
 --    foldr next (remainder 5) [0,7..28] 0
@@ -68,22 +68,22 @@ getIntegralByte :: Get Word32
 getIntegralByte = fromIntegral <$> getWord8
 {-# INLINE getIntegralByte #-}
 
-next :: Int -> (Word32 -> Get VarIntResult) -> Word32 -> Get VarIntResult
+next :: Int -> (Word32 -> ExceptT MalformedVarInt Get Word32) -> Word32 -> ExceptT MalformedVarInt Get Word32
 next o n v = do
-  b <- getIntegralByte
+  b <- lift getIntegralByte
   if b .&. 0x80 == 0
-    then return $ Right $ v .|. (b `shiftL` o)
+    then return $ v .|. (b `shiftL` o)
     else do
       let v' = v .|. ((b .&. 0x7f) `shiftL` o)
       n v'
 {-# INLINE next #-}
 
-remainder :: Int -> Word32 -> Get VarIntResult
-remainder 0 _ = return $ Left MalformedVarInt
+remainder :: Int -> Word32 -> ExceptT MalformedVarInt Get Word32
+remainder 0 _ = throwError MalformedVarInt
 remainder n r = do
-  b <- getIntegralByte
+  b <- lift getIntegralByte
   if b .&. 0x80 == 0
-    then return $ Right r
+    then return r
     else remainder (n-1) r
 
 -- | Encode a 'Word32' in the protobuf variable-length encoding.
@@ -119,19 +119,25 @@ sinkGet' g = go (runGetPartial g)
             Fail msg _ ->
               return $ Left msg
 
-consumeAndHash :: forall m o a e. (MonadThrow m, Exception e) => e -> Get (Either e a) -> HashT (ConduitM ByteString o m) a
-consumeAndHash eofError = continue . runGetPartial
+consumeAndHash :: forall m o a e. (Monad m) => e -> ExceptT e Get a -> ExceptT e (HashT (ConduitM ByteString o m)) a
+consumeAndHash eofError = ExceptT . (continue . runGetPartial) . runExceptT
   where continue f = do
           bs <- fromMaybe BS.empty <$> lift awaitNonEmpty
           (loop <*> f) bs
-        loop :: ByteString -> Result (Either e a) -> HashT (ConduitM ByteString o m) a
-        loop _ (Fail _ _) = throwM eofError
+        loop :: ByteString -> Result (Either e a) -> HashT (ConduitM ByteString o m) (Either e a)
+        loop _ (Fail _ _) = return $ Left eofError
         loop bs (Partial f) = do
           updateS bs
           continue f
         loop _ (Done (Left e) _) =
-          throwM e
+          return $ Left e
         loop bs (Done (Right r) l) = do
           updateS $ dropRight (BS.length l) bs
           lift $ leftover l
-          return r
+          return $ Right r
+
+getShortString :: Get Text
+getShortString = do
+  len <- getWord8
+  bs <- getByteString $ fromIntegral len
+  return $ decodeUtf8 bs

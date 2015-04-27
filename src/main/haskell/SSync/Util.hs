@@ -1,7 +1,9 @@
 {-# LANGUAGE ScopedTypeVariables, LambdaCase, BangPatterns #-}
 
-module SSync.Util (rechunk, encodeVarInt, awaitNonEmpty, dropRight) where
+module SSync.Util (rechunk, encodeVarInt, awaitNonEmpty, dropRight, orThrow) where
 
+import Control.Exception (Exception)
+import Control.Monad.Except (ExceptT, runExceptT)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 import Data.ByteString (ByteString)
@@ -50,3 +52,6 @@ awaitNonEmpty = await >>= \case
 
 dropRight :: Int -> ByteString -> ByteString
 dropRight n bs = BS.take (BS.length bs - n) bs
+
+orThrow :: (MonadThrow m, Exception e) => ExceptT e m r -> m r
+orThrow = either throwM return <=< runExceptT

@@ -5,14 +5,15 @@ module SSync.PatchApplier (patchApplier, PatchException(..)) where
 import SSync.PatchComputer
 import SSync.Hash
 import SSync.Util
-import SSync.Util.Cereal
+import qualified SSync.Util.Cereal as G
+import SSync.Util.Cereal (MalformedVarInt(..), sinkGet', getShortString)
 
 import SSync.Constants
 import Control.Applicative
 import Data.Word
 import Control.Monad
+import Control.Monad.Except (ExceptT(..), withExceptT, throwError, runExceptT)
 import Data.Text (Text)
-import Data.Text.Encoding (decodeUtf8)
 import Control.Exception (Exception)
 import Data.Typeable (Typeable)
 
@@ -36,70 +37,65 @@ data PatchException = UnexpectedEOF
                     deriving (Show, Typeable)
 instance Exception PatchException
 
-consumeAndHash' :: (MonadThrow m) => Get (Either PatchException a) -> HashT (ConduitM ByteString o m) a
-consumeAndHash' = consumeAndHash UnexpectedEOF
+consumeAndHash :: (Monad m) => ExceptT PatchException Get a -> ExceptT PatchException (HashT (ConduitM ByteString o m)) a
+consumeAndHash = G.consumeAndHash UnexpectedEOF
+
+getVarInt :: ExceptT PatchException Get Word32
+getVarInt = withExceptT fixup G.getVarInt
+  where fixup MalformedVarInt = MalformedInteger
+
+fixupEOF :: String -> PatchException
+fixupEOF _ = UnexpectedEOF
+
+withHashTEx :: (Monad m) => HashAlgorithm -> ExceptT e (HashT m) a -> ExceptT e m a
+withHashTEx ha = ExceptT . withHashT ha . runExceptT
 
 patchApplier :: (MonadThrow m) => ChunkProvider m -> Conduit ByteString m ByteString
-patchApplier chunkProvider = do
-  checksumAlg <- join $ either (const $ throwM UnexpectedEOF) (either throwM return) <$> sinkGet' getChecksumAlgorithm
-  expectedDigest <- withHashT checksumAlg $ do
-    blockSize <- consumeAndHash' getBlockSize
-    when (blockSize > maxBlockSize) $ throwM (BlockSizeTooLarge blockSize)
+patchApplier chunkProvider = orThrow $ do
+  checksumAlgName <- withExceptT fixupEOF $ ExceptT (sinkGet' getShortString)
+  checksumAlg <- maybe (throwError $ UnknownChecksum checksumAlgName) return (forName checksumAlgName)
+  expectedDigest <- withHashTEx checksumAlg $ do
+    blockSize <- consumeAndHash getBlockSize
+    when (blockSize > maxBlockSize) $ throwError (BlockSizeTooLarge blockSize)
     let blockSizeI = fromIntegral blockSize -- we know it'll fit in an Int now
     process blockSize (chunkProvider blockSizeI)
     digestS
-  actualDigest <- join $ either (const $ throwM UnexpectedEOF) return <$> sinkGet' (getByteString $ BS.length expectedDigest)
+  actualDigest <- withExceptT fixupEOF $ ExceptT (sinkGet' $ getByteString $ BS.length expectedDigest)
   when (expectedDigest /= actualDigest) $ do
-    throwM ChecksumMismatch
-  awaitNonEmpty >>= \case
+    throwError ChecksumMismatch
+  lift awaitNonEmpty >>= \case
     Nothing -> return ()
-    Just _ -> throwM ExpectedEOF
+    Just _ -> throwError ExpectedEOF
 
-process :: (MonadThrow m) => Word32 -> (Word32 -> m (Maybe ByteString)) -> HashT (ConduitM ByteString ByteString m) ()
-process blockSize chunkProvider = do
-  chunk <- consumeAndHash' (getChunk blockSize)
-  case chunk of
+process :: (Monad m) => Word32 -> (Word32 -> m (Maybe ByteString)) -> ExceptT PatchException (HashT (ConduitM ByteString ByteString m)) ()
+process blockSize chunkProvider =
+  consumeAndHash (getChunk blockSize) >>= \case
     Just (Data bytes) ->
-      mapM_ (lift . yield) (BSL.toChunks bytes) >> process blockSize chunkProvider
+      mapM_ (lift . lift . yield) (BSL.toChunks bytes) >> process blockSize chunkProvider
     Just (Block num) ->
-      lift (lift $ chunkProvider num) >>= \case
-        Just bytes -> lift (yield bytes) >> process blockSize chunkProvider
-        Nothing -> throwM $ UnknownBlock num
+      (lift . lift . lift) (chunkProvider num) >>= \case
+        Just bytes -> (lift . lift . yield) bytes >> process blockSize chunkProvider
+        Nothing -> throwError $ UnknownBlock num
     Nothing ->
       return ()
 
-getChecksumAlgorithm :: Get (Either PatchException HashAlgorithm)
-getChecksumAlgorithm = do
-  l <- getWord8
-  bs <- getByteString $ fromIntegral l
-  let hashAlgName = decodeUtf8 bs
-  case forName hashAlgName of
-   Just hashAlg -> return $ Right hashAlg
-   Nothing -> return $ Left $ UnknownChecksum hashAlgName
-
-getBlockSize :: Get (Either PatchException Word32)
+getBlockSize :: ExceptT PatchException Get Word32
 getBlockSize = do
-  getVarInt >>= \case
-    Left _ -> return $ Left MalformedInteger
-    Right blockSize ->
-      if blockSize > maxBlockSize
-      then return $ Left $ BlockSizeTooLarge blockSize
-      else return $ Right blockSize
+  blockSize <- getVarInt
+  when (blockSize > maxBlockSize) $ throwError (BlockSizeTooLarge blockSize)
+  return blockSize
 
-getChunk :: Word32 -> Get (Either PatchException (Maybe Chunk))
+getChunk :: Word32 -> ExceptT PatchException Get (Maybe Chunk)
 getChunk blockSize =
-  getWord8 >>= \case
+  lift getWord8 >>= \case
     0 ->
-      either (const $ Left MalformedInteger) (Right . Just . Block) <$> getVarInt
+      Just . Block <$> getVarInt
     1 -> do
-      getVarInt >>= \case
-        Left MalformedVarInt -> return $ Left MalformedInteger
-        Right len ->
-          if len > blockSize
-          then return $ Left $ DataBlockTooLarge len
-          else Right . Just . Data <$> getLazyByteString (fromIntegral len)
+      len <- getVarInt
+      when (len > blockSize) $ throwError (DataBlockTooLarge len)
+      Just . Data <$> lift (getLazyByteString (fromIntegral len))
     255 ->
-      return $ Right Nothing
+      return Nothing
     other ->
-      return $ Left $ UnknownBlockType other
+      throwError $ UnknownBlockType other
 

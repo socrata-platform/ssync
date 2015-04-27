@@ -17,9 +17,10 @@ module SSync.SignatureTable (
 import SSync.Hash
 import SSync.Constants
 import qualified SSync.RollingChecksum as RC
-import SSync.Util (awaitNonEmpty)
-import SSync.Util.Cereal (consumeAndHash)
+import SSync.Util (awaitNonEmpty, orThrow)
+import qualified SSync.Util.Cereal as G
 
+import Control.Monad.Except (ExceptT(..), withExceptT, throwError, runExceptT)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Algorithms.Intro as MV
@@ -33,17 +34,15 @@ import qualified Data.Vector.Primitive.Mutable as MPV
 import Data.Foldable
 import Data.Bits
 import Data.Monoid
-import Control.Applicative ((<$>))
 import qualified Data.Sequence as Seq
 import qualified Data.ByteString as BS
 import Data.ByteString (ByteString)
 import Data.Word (Word32)
-import Control.Monad (join, unless)
-import Data.Text.Encoding (decodeUtf8)
+import Control.Monad (unless, when)
 import Data.Text (Text)
 import Control.Monad.ST
-import Data.Serialize.Get (Get, getWord8, getWord32be, getByteString)
-import SSync.Util.Cereal (getVarInt, MalformedVarInt(MalformedVarInt), sinkGet')
+import Data.Serialize.Get (Get, getWord32be, getByteString)
+import SSync.Util.Cereal (MalformedVarInt(MalformedVarInt), sinkGet')
 import Conduit
 import Data.Typeable (Typeable)
 import Control.Exception (Exception)
@@ -82,11 +81,9 @@ data SignatureTableException = UnexpectedEOF
                              deriving (Show, Typeable)
 instance Exception SignatureTableException
 
-getShortString :: Get Text
-getShortString = do
-  len <- getWord8
-  bs <- getByteString $ fromIntegral len
-  return $ decodeUtf8 bs
+getVarInt :: ExceptT SignatureTableException Get Word32
+getVarInt = withExceptT fixup G.getVarInt
+  where fixup MalformedVarInt = MalformedInteger
 
 data BlockSpec = BlockSpec { bsEntry :: {-# UNPACK #-} !Word32
                            , bsChecksum :: {-# UNPACK #-} !Word32
@@ -135,21 +132,18 @@ getBlock hashSize n = do
   strong <- getByteString hashSize
   return $ BlockSpec n check strong
 
-getBlocks :: Word32 -> Int -> Seq.Seq BlockSpec -> Get (Either SignatureTableException (Seq.Seq BlockSpec))
+getBlocks :: Word32 -> Int -> Seq.Seq BlockSpec -> ExceptT SignatureTableException Get (Seq.Seq BlockSpec)
 getBlocks maxSigs hashSize !pfx = do
-  getVarInt >>= \case
-    Left MalformedVarInt -> return $ Left MalformedInteger
-    Right sigsThisBlock ->
-      if sigsThisBlock > maxSigs
-      then return $ Left (InvalidSignatureBlockSize sigsThisBlock)
-      else if sigsThisBlock == 0
-        then return $ Right pfx
-        else do
-          let startBlock = fromIntegral $ Seq.length pfx
-          blocks <- Seq.fromList `fmap` sequence (map (getBlock hashSize) [startBlock .. startBlock + sigsThisBlock - 1])
-          if sigsThisBlock == maxSigs
-            then getBlocks maxSigs hashSize (pfx <> blocks)
-            else return $ Right (pfx <> blocks)
+  sigsThisBlock <- getVarInt
+  when (sigsThisBlock > maxSigs) $ throwError (InvalidSignatureBlockSize sigsThisBlock)
+  if sigsThisBlock == 0
+    then return pfx
+    else do
+      let startBlock = fromIntegral $ Seq.length pfx
+      blocks <- Seq.fromList `fmap` sequence (map (lift . getBlock hashSize) [startBlock .. startBlock + sigsThisBlock - 1])
+      if sigsThisBlock == maxSigs
+        then getBlocks maxSigs hashSize (pfx <> blocks)
+        else return $ pfx <> blocks
 
 copyToVector :: Seq.Seq a -> forall s. ST s (MV.STVector s a)
 copyToVector xs = do
@@ -188,55 +182,45 @@ indexBlocks blocks =
           loop afterChunk
     loop 0
 
-getSignatureTable :: Get (Either SignatureTableException SignatureTable)
+getSignatureTable :: ExceptT SignatureTableException Get SignatureTable
 getSignatureTable = do
-  getVarInt >>= \case
-    Left MalformedVarInt -> return $ Left MalformedInteger
-    Right blockSize ->
-      if blockSize > maxBlockSize
-      then return $ Left $ InvalidBlockSize blockSize
-      else do
-        strongHashAlgName <- getShortString
-        case forName strongHashAlgName of
-          Nothing ->
-            return $ Left (UnknownStrongHash strongHashAlgName)
-          Just strongHashAlg -> do
-            let strongHashSize = digestSize strongHashAlg
-            getVarInt >>= \case
-              Left MalformedVarInt -> return $ Left MalformedInteger
-              Right sigsPerBlock ->
-                if sigsPerBlock > maxSignatureBlockSize
-                then return $ Left (InvalidMaxSignatureBlockSize sigsPerBlock)
-                else do
-                  getBlocks sigsPerBlock strongHashSize Seq.empty >>= \case
-                    Left err -> return $ Left err
-                    Right blocksUnsorted -> do
-                      let blocksSorted = V.create $ do
-                            v <- copyToVector blocksUnsorted
-                            MV.sortBy checksums v
-                            return v
-                          blocksIndexed = indexBlocks blocksSorted
-                      return $ Right (ST blockSize (fromIntegral blockSize) strongHashAlg blocksSorted blocksIndexed)
+  blockSize <- getVarInt
+  when (blockSize > maxBlockSize) $ throwError (InvalidBlockSize blockSize)
+  strongHashAlgName <- lift G.getShortString
+  strongHashAlg <- maybe (throwError $ UnknownStrongHash strongHashAlgName) return (forName strongHashAlgName)
+  let strongHashSize = digestSize strongHashAlg
+  sigsPerBlock <- getVarInt
+  when (sigsPerBlock > maxSignatureBlockSize) $ throwError (InvalidMaxSignatureBlockSize sigsPerBlock)
+  blocksUnsorted <- getBlocks sigsPerBlock strongHashSize Seq.empty
+  let blocksSorted = V.create $ do
+        v <- copyToVector blocksUnsorted
+        MV.sortBy checksums v
+        return v
+      blocksIndexed = indexBlocks blocksSorted
+  return $ ST blockSize (fromIntegral blockSize) strongHashAlg blocksSorted blocksIndexed
 
-consumeAndHash' :: (MonadThrow m) => Get (Either SignatureTableException a) -> HashT (ConduitM ByteString o m) a
-consumeAndHash' = consumeAndHash UnexpectedEOF
+consumeAndHash :: (Monad m) => ExceptT SignatureTableException Get a -> ExceptT SignatureTableException (HashT (ConduitM ByteString o m)) a
+consumeAndHash = G.consumeAndHash UnexpectedEOF
 
-consumeSignatureTable :: MonadThrow m => Consumer ByteString m SignatureTable
-consumeSignatureTable = do
-  checksumAlgName <- join $ either (const $ throwM UnexpectedEOF) return <$> sinkGet' getShortString
-  case forName checksumAlgName of
-   Nothing ->
-     throwM $ UnknownChecksum checksumAlgName
-   Just checksumAlg -> do
-     (st, d) <- withHashT checksumAlg $ do
-       st <- consumeAndHash' getSignatureTable
-       d <- digestS
-       return (st, d)
-     checksum <- join $ either (const $ throwM UnexpectedEOF) return <$> sinkGet' (getByteString $ BS.length d)
-     unless (d == checksum) $ throwM ChecksumMismatch
-     awaitNonEmpty >>= \case
-       Nothing -> return st
-       Just _ -> throwM ExpectedEOF
+fixupEOF :: String -> SignatureTableException
+fixupEOF _ = UnexpectedEOF
+
+withHashTEx :: (Monad m) => HashAlgorithm -> ExceptT e (HashT m) a -> ExceptT e m a
+withHashTEx ha = ExceptT . withHashT ha . runExceptT
+
+consumeSignatureTable :: (MonadThrow m) => forall o. ConduitM ByteString o m SignatureTable
+consumeSignatureTable = orThrow $ do
+  checksumAlgName <- withExceptT fixupEOF $ ExceptT (sinkGet' G.getShortString)
+  checksumAlg <- maybe (throwError $ UnknownChecksum checksumAlgName) return (forName checksumAlgName)
+  (st, d) <- withHashTEx checksumAlg $ do
+    st <- consumeAndHash getSignatureTable
+    d <- lift digestS
+    return (st, d)
+  checksum <- withExceptT fixupEOF $ ExceptT (sinkGet' $ getByteString $ BS.length d)
+  unless (d == checksum) $ throwError ChecksumMismatch
+  lift awaitNonEmpty >>= \case
+    Nothing -> return st
+    Just _ -> throwError ExpectedEOF
 
 hash16 :: Word32 -> Int
 hash16 x = 0xffff .&. fromIntegral (x `xor` (x `shiftR` 16))
