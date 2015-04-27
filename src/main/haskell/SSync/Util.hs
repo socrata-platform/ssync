@@ -2,18 +2,17 @@
 
 module SSync.Util (rechunk, encodeVarInt, awaitNonEmpty, dropRight, orThrow) where
 
+import Conduit
 import Control.Exception (Exception)
+import Control.Monad (unless, (<=<))
 import Control.Monad.Except (ExceptT, runExceptT)
+import Data.Bits (shiftR, (.|.))
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
-import Data.ByteString (ByteString)
 import qualified Data.DList as DL
-import Data.Monoid
-import Control.Monad
-import Data.Word
-import Data.Bits
-
-import Conduit
+import Data.Monoid (mconcat, (<>))
+import Data.Word (Word32)
 
 rechunk :: forall m. (Monad m) => Int -> Conduit BS.ByteString m ByteString
 rechunk targetSize = go DL.empty 0

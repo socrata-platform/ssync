@@ -33,12 +33,13 @@ the start of the last chunk.
 
 -}
 
-import Data.Word (Word8)
+import Control.Monad (forM_)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.Word (Word8)
+
 import SSync.SimpleQueue
 import SSync.Hash
-import Control.Monad (forM_)
 
 #ifdef TRACING
 import qualified Debug.Trace as DT

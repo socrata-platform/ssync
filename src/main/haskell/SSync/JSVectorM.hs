@@ -1,8 +1,7 @@
 module SSync.JSVectorM (Vector, VectorMonad, (!), write, set, new) where
 
-import qualified GHCJS.Types as T
-
 import Control.Monad (forM_)
+import qualified GHCJS.Types as T
 
 import SSync.JSVector.Internal
 

@@ -18,19 +18,21 @@ module SSync.Hash (
 , withHashState'
 ) where
 
+import Control.Monad (liftM)
+import Control.Monad.State.Strict (StateT, MonadState, evalStateT, get, put, modify)
+import Control.Monad.Trans (lift)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Control.Monad.State.Strict
-import Data.Text (Text)
 import qualified Data.ByteString.Base16 as B16
+import Data.Text (Text)
 
 #ifdef STUPID_HASH
 
+import Crypto.Types (BitLength)
 import qualified Data.DList as DL
 import qualified Data.Digest.Pure.MD5 as MD5 -- pureMD5 is 10x faster than Crypto's MD5
-import Data.Tagged (untag, Tagged)
-import Crypto.Types (BitLength)
 import Data.Serialize (encode)
+import Data.Tagged (untag, Tagged)
 
 data HashAlgorithm = MD5 deriving (Read, Show, Eq, Ord)
 

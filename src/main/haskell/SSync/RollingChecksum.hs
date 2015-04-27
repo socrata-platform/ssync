@@ -9,11 +9,12 @@ module SSync.RollingChecksum (
 ) where
 
 import Prelude hiding (init)
+
+import Data.Bits (shiftR, shiftL, xor, (.&.))
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
-import Data.ByteString (ByteString)
-import Data.Word
-import Data.Bits
+import Data.Word (Word32, Word8)
 
 data RollingChecksum = RC { _rcBlockSize :: {-# UNPACK #-} !Word32
                           , _rc :: {-# UNPACK #-} !Word32

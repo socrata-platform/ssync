@@ -1,8 +1,8 @@
 module SSync.JSVector (Vector, (!), create, empty) where
 
-import System.IO.Unsafe
-
 import qualified SSync.JSVectorM as VM
+import System.IO.Unsafe (unsafePerformIO)
+
 import SSync.JSVector.Internal
 
 newtype Vector = Vector VM.Vector

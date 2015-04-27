@@ -2,26 +2,25 @@
 
 module SSync.PatchApplier (patchApplier, PatchException(..)) where
 
-import SSync.PatchComputer
-import SSync.Hash
-import SSync.Util
-import qualified SSync.Util.Cereal as G
-import SSync.Util.Cereal (MalformedVarInt(..), sinkGet', getShortString)
-
-import SSync.Constants
-import Control.Applicative
-import Data.Word
-import Control.Monad
-import Control.Monad.Except (ExceptT(..), withExceptT, throwError, runExceptT)
-import Data.Text (Text)
-import Control.Exception (Exception)
-import Data.Typeable (Typeable)
-
 import Conduit
-import Data.Serialize.Get (Get, getWord8, getBytes)
+import Control.Applicative ((<$>))
+import Control.Exception (Exception)
+import Control.Monad (when)
+import Control.Monad.Except (ExceptT(..), withExceptT, throwError, runExceptT)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+import Data.Serialize.Get (Get, getWord8, getBytes)
+import Data.Text (Text)
+import Data.Typeable (Typeable)
+import Data.Word (Word8, Word32)
+
+import SSync.Constants
+import SSync.Hash
+import SSync.PatchComputer
+import SSync.Util
+import SSync.Util.Cereal hiding (consumeAndHash, getVarInt)
+import qualified SSync.Util.Cereal as SC
 
 type ChunkProvider m = Int -> Word32 -> m (Maybe ByteString) -- blocksize/number
 
@@ -38,10 +37,10 @@ data PatchException = UnexpectedEOF
 instance Exception PatchException
 
 consumeAndHash :: (Monad m) => ExceptT PatchException Get a -> ExceptT PatchException (HashT (ConduitM ByteString o m)) a
-consumeAndHash = G.consumeAndHash UnexpectedEOF
+consumeAndHash = SC.consumeAndHash UnexpectedEOF
 
 getVarInt :: ExceptT PatchException Get Word32
-getVarInt = withExceptT fixup G.getVarInt
+getVarInt = withExceptT fixup SC.getVarInt
   where fixup MalformedVarInt = MalformedInteger
 
 fixupEOF :: String -> PatchException
@@ -93,7 +92,7 @@ getChunk blockSize =
     1 -> do
       len <- getVarInt
       when (len > blockSize) $ throwError (DataBlockTooLarge len)
-      Just . Data <$> lift (G.getLazyBytes (fromIntegral len))
+      Just . Data <$> lift (getLazyBytes (fromIntegral len))
     255 ->
       return Nothing
     other ->

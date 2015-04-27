@@ -3,22 +3,22 @@
 
 module SSync.PatchComputer (patchComputer, patchComputer', Chunk(..)) where
 
-import qualified Data.DList as DL
+import Conduit
+import Control.Monad (unless)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as BSL
-import Conduit
-import Data.Word
-import Data.Monoid
-import Control.Monad.Identity
+import qualified Data.DList as DL
+import Data.Monoid (mconcat, mempty, (<>))
+import Data.Word (Word32)
 
-import SSync.SignatureTable
-import qualified SSync.RollingChecksum as RC
+import SSync.Chunk
 import qualified SSync.DataQueue as DQ
 import SSync.Hash
+import qualified SSync.RollingChecksum as RC
+import SSync.SignatureTable
 import SSync.Util
-import SSync.Chunk
 
 data SizedBuilder = SizedBuilder (DL.DList ByteString) {-# UNPACK #-} !Int
 sbEmpty :: SizedBuilder

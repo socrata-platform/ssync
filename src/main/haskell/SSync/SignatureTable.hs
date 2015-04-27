@@ -14,16 +14,25 @@ module SSync.SignatureTable (
 , SignatureTableException(..)
 ) where
 
-import SSync.Hash
-import SSync.Constants
-import qualified SSync.RollingChecksum as RC
-import SSync.Util (awaitNonEmpty, orThrow)
-import qualified SSync.Util.Cereal as G
-
+import Conduit
+import Control.Exception (Exception)
+import Control.Monad (unless, when)
 import Control.Monad.Except (ExceptT(..), withExceptT, throwError, runExceptT)
+import Control.Monad.ST (ST)
+import Data.Bits (shiftL, shiftR, xor, (.&.))
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import Data.Foldable (forM_)
+import Data.Monoid ((<>))
+import qualified Data.Sequence as Seq
+import Data.Serialize.Get (Get, getWord32be, getBytes)
+import Data.Text (Text)
+import Data.Typeable (Typeable)
 import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Algorithms.Intro as MV
+import qualified Data.Vector.Mutable as MV
+import Data.Word (Word32)
+
 #ifdef STUPID_VECT
 import qualified SSync.JSVector as PV
 import qualified SSync.JSVectorM as MPV
@@ -31,21 +40,13 @@ import qualified SSync.JSVectorM as MPV
 import qualified Data.Vector.Primitive as PV
 import qualified Data.Vector.Primitive.Mutable as MPV
 #endif
-import Data.Foldable
-import Data.Bits
-import Data.Monoid
-import qualified Data.Sequence as Seq
-import qualified Data.ByteString as BS
-import Data.ByteString (ByteString)
-import Data.Word (Word32)
-import Control.Monad (unless, when)
-import Data.Text (Text)
-import Control.Monad.ST
-import Data.Serialize.Get (Get, getWord32be, getBytes)
-import SSync.Util.Cereal (MalformedVarInt(MalformedVarInt), sinkGet')
-import Conduit
-import Data.Typeable (Typeable)
-import Control.Exception (Exception)
+
+import SSync.Constants
+import SSync.Hash
+import qualified SSync.RollingChecksum as RC
+import SSync.Util
+import SSync.Util.Cereal hiding (getVarInt, consumeAndHash)
+import qualified SSync.Util.Cereal as SC
 
 #ifdef TRACING
 import qualified Debug.Trace as DT
@@ -82,7 +83,7 @@ data SignatureTableException = UnexpectedEOF
 instance Exception SignatureTableException
 
 getVarInt :: ExceptT SignatureTableException Get Word32
-getVarInt = withExceptT fixup G.getVarInt
+getVarInt = withExceptT fixup SC.getVarInt
   where fixup MalformedVarInt = MalformedInteger
 
 data BlockSpec = BlockSpec { bsEntry :: {-# UNPACK #-} !Word32
@@ -186,7 +187,7 @@ getSignatureTable :: ExceptT SignatureTableException Get SignatureTable
 getSignatureTable = do
   blockSize <- getVarInt
   when (blockSize > maxBlockSize) $ throwError (InvalidBlockSize blockSize)
-  strongHashAlgName <- lift G.getShortString
+  strongHashAlgName <- lift getShortString
   strongHashAlg <- maybe (throwError $ UnknownStrongHash strongHashAlgName) return (forName strongHashAlgName)
   let strongHashSize = digestSize strongHashAlg
   sigsPerBlock <- getVarInt
@@ -200,7 +201,7 @@ getSignatureTable = do
   return $ ST blockSize (fromIntegral blockSize) strongHashAlg blocksSorted blocksIndexed
 
 consumeAndHash :: (Monad m) => ExceptT SignatureTableException Get a -> ExceptT SignatureTableException (HashT (ConduitM ByteString o m)) a
-consumeAndHash = G.consumeAndHash UnexpectedEOF
+consumeAndHash = SC.consumeAndHash UnexpectedEOF
 
 fixupEOF :: String -> SignatureTableException
 fixupEOF _ = UnexpectedEOF
@@ -210,7 +211,7 @@ withHashTEx ha = ExceptT . withHashT ha . runExceptT
 
 consumeSignatureTable :: (MonadThrow m) => forall o. ConduitM ByteString o m SignatureTable
 consumeSignatureTable = orThrow $ do
-  checksumAlgName <- withExceptT fixupEOF $ ExceptT (sinkGet' G.getShortString)
+  checksumAlgName <- withExceptT fixupEOF $ ExceptT (sinkGet' getShortString)
   checksumAlg <- maybe (throwError $ UnknownChecksum checksumAlgName) return (forName checksumAlgName)
   (st, d) <- withHashTEx checksumAlg $ do
     st <- consumeAndHash getSignatureTable

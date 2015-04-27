@@ -3,7 +3,7 @@ module SSync.Constants (
 , maxSignatureBlockSize
 ) where
 
-import Data.Word
+import Data.Word (Word32)
 
 maxBlockSize :: Word32
 maxBlockSize = 10*1024*1024

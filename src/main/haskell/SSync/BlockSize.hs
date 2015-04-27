@@ -5,8 +5,8 @@ module SSync.BlockSize (
 , blockSizeWord
 ) where
 
-import Data.Word (Word32)
 import Data.Maybe (fromMaybe)
+import Data.Word (Word32)
 
 import SSync.Constants (maxBlockSize)
 

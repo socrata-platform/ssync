@@ -10,23 +10,25 @@ module SSync.Util.Cereal (
 , getLazyBytes
 ) where
 
-import SSync.Util (awaitNonEmpty, dropRight)
+import Conduit
+import Control.Applicative ((<$>), (<*>))
+import Control.Monad (unless)
+import Control.Monad.Except (ExceptT(..), throwError, runExceptT)
+import Data.Bits (shiftL, shiftR, (.|.), (.&.))
 import Data.ByteString (ByteString)
-import qualified Data.DList as DL
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
-import Data.Serialize
-import Control.Applicative ((<$>), (<*>))
+import qualified Data.DList as DL
+import Data.Maybe (fromMaybe)
+import Data.Serialize.Get (runGetPartial, Result(..), Get, getWord8, getBytes, remaining, lookAhead)
+import Data.Serialize.Put (Putter, putWord8)
 import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8)
-import Data.Word (Word32)
-import Data.Bits (shiftL, shiftR, (.|.), (.&.))
 import Data.Typeable (Typeable)
-import Conduit
-import Control.Monad (unless)
-import Data.Maybe (fromMaybe)
+import Data.Word (Word32)
+
 import SSync.Hash (HashT, updateS)
-import Control.Monad.Except (ExceptT(..), throwError, runExceptT)
+import SSync.Util (awaitNonEmpty, dropRight)
 
 -- | Thrown when 'getVarInt' fails to find a terminal byte within 10
 -- bytes.  Note: this is _not_ thrown if the end of input is reached

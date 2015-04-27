@@ -4,20 +4,20 @@ module SSync.SignatureComputer (
   produceSignatureTable
 ) where
 
+import Conduit
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import qualified Data.Text as T
 import Data.Monoid ((<>))
-import Data.Word (Word32)
-import Data.Text.Encoding (encodeUtf8)
 import Data.Serialize.Put (runPut, putWord32be, putByteString)
-import Conduit
+import qualified Data.Text as T
+import Data.Text.Encoding (encodeUtf8)
+import Data.Word (Word32)
 
 import SSync.Hash
-import SSync.Util (rechunk)
-import SSync.Util.Cereal (putVarInt)
+import SSync.Util
+import SSync.Util.Cereal
 import SSync.Constants
-import SSync.BlockSize (BlockSize, blockSizeWord)
+import SSync.BlockSize hiding (blockSize)
 import qualified SSync.RollingChecksum as RC
 
 produceAndHash :: (Monad m) => HashState -> ConduitM ByteString ByteString m HashState
