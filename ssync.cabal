@@ -27,6 +27,7 @@ executable ssync
                    , SSync.RollingChecksum
                    , SSync.SignatureComputer
                    , SSync.SignatureTable
+                   , SSync.SignatureTable.Internal
                    , SSync.SimpleQueue
                    , SSync.Util
                    , SSync.Util.Cereal

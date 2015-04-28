@@ -11,13 +11,15 @@ import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.DList as DL
 import Data.Monoid (mconcat, mempty, (<>))
+import qualified Data.Text as T
+import Data.Text.Encoding (encodeUtf8)
 import Data.Word (Word32)
 
 import SSync.Chunk
 import qualified SSync.DataQueue as DQ
 import SSync.Hash
 import qualified SSync.RollingChecksum as RC
-import SSync.SignatureTable
+import SSync.SignatureTable.Internal
 import SSync.Util
 
 data SizedBuilder = SizedBuilder (DL.DList ByteString) {-# UNPACK #-} !Int
@@ -49,10 +51,11 @@ atLeastBlockSizeOrEnd target pfx = go (DL.singleton pfx) (BS.length pfx)
 --
 -- An END chunk is a 255 byte and must occur exactly once, at the end
 -- of the chunk stream.
-fromChunks :: (Monad m) => Word32 -> Conduit Chunk m ByteString
-fromChunks blockSize = do
-  yield "\003MD5"
-  checksum <- withHashT MD5 $ do
+fromChunks :: (Monad m) => HashAlgorithm -> Word32 -> Conduit Chunk m ByteString
+fromChunks checksumAlg blockSize = do
+  let checksumAlgName = encodeUtf8 . T.pack . show $ checksumAlg
+  yield $ BS.singleton (fromIntegral $ BS.length checksumAlgName) <> checksumAlgName
+  checksum <- withHashT checksumAlg $ do
     let loop i acc | i > 1000 = do
                        flush acc
                        loop 0 mempty
@@ -76,7 +79,7 @@ fromChunks blockSize = do
 -- | Given a 'SignatureTable', convert a stream of 'ByteString's into
 -- a signature file.
 patchComputer :: (Monad m) => SignatureTable -> Conduit ByteString m ByteString
-patchComputer st = patchComputer' st $= fromChunks (stBlockSize st)
+patchComputer st = patchComputer' st $= fromChunks (stChecksumAlg st) (stBlockSize st)
 
 -- | Given a 'SignatureTable', convert a stream of 'ByteString's into
 -- a stream of patch 'Chunk's.  Use 'patchComputer' to produce an

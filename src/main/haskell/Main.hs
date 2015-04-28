@@ -329,7 +329,7 @@ main = do
 go :: String -> String -> IO ()
 go dat sig = do
   l <- runResourceT $ sourceFile (FP.decodeString sig) $$ consumeSignatureTable
-  print $ smallify l
+  -- print $ smallify l
   if True
     then do
       runResourceT $ sourceFile (FP.decodeString dat) $$ patchComputer' l $= sinkNull -- (awaitForever $ liftIO . printChunk)
