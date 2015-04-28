@@ -30,27 +30,19 @@ executable ssync
                    , SSync.SimpleQueue
                    , SSync.Util
                    , SSync.Util.Cereal
-  build-depends:     attoparsec >=0.12.1.0 && <0.13
-                   , base >=4.7 && <4.8
+  build-depends:     base >=4.7 && <4.8
                    , base16-bytestring >=0.1.1.6 && <0.2
                    , byteable >=0.1.0 && <0.2
                    , bytestring >=0.10 && <0.11
-                   , conduit-combinators
-                   , containers >= 0.5.5.1
-                   , cereal
-                   , cereal-conduit >= 0.7.2.3 && <0.8
-                   , dlist
-                   , exceptions >= 0.6.1 && < 0.7
-                   , mono-traversable
-                   , mtl == 2.2.1
-                   , primitive >= 0.5.3.0
+                   , conduit-combinators >=0.3 && <0.4
+                   , containers >= 0.5.5.1 && <0.6
+                   , cereal >=0.4.1.1 && <0.5
+                   , dlist >=0.7.0.1 && <0.8
+                   , mtl >= 2.2.1 && <2.3
                    , text >= 1.1.1.3 && <1.3
-                   , transformers
+                   , transformers >=0.3 && <0.5
                    , vector >= 0.10.11.0 && <0.11
                    , vector-algorithms >= 0.6.0.3 && < 0.7
-                   , conduit
-                   , tagged
-                   , crypto-api
   hs-source-dirs:      src/main/haskell
   default-language:    Haskell2010
   ghc-options: -O2 -Wall
@@ -63,11 +55,10 @@ executable ssync
                   , SSync.JSVectorM
                   , SSync.JSVector.Internal
      cpp-options: -DSTUPID_HASH -DSTUPID_VECT -DGHCJS_BROWSER
-     build-depends: Crypto == 4.2.5.1
-                  , pureMD5 == 2.1.2.1
+     build-depends: crypto-api >=0.13.2 && <0.14
+                  , tagged >=0.8.0.1 && <0.9
+                  , pureMD5 >= 2.1.2.1 && <2.2
                   , ghcjs-base
-                  , stm
-                  , conduit-extra
   if !impl(ghcjs)
      build-depends: cryptohash >=0.11.6 && <0.12
                   , system-filepath >=0.4.13.1 && <0.5
