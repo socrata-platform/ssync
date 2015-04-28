@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP #-}
 
-#ifdef __GHCJS__
+#ifdef __zGHCJS__
 
 {-# LANGUAGE OverloadedStrings, RecursiveDo, MultiWayIf, RankNTypes, LambdaCase, BangPatterns, ScopedTypeVariables #-}
 
@@ -278,15 +278,21 @@ import System.Environment
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString as BS
 import Control.Monad.IO.Class
-import Data.Conduit
+-- import Data.Conduit
 import Conduit
 
 import SSync.SignatureTable
 import SSync.SignatureComputer
 import SSync.PatchComputer
 import SSync.PatchApplier
-import SSync.Hash
+#ifndef __GHCJS__
 import qualified Filesystem.Path.CurrentOS as FP
+#endif
+
+tap :: (MonadIO m, Show b) => (a -> b) -> Conduit a m a
+tap f = awaitForever $ \a -> do
+  liftIO . putStrLn . show $ f a
+  yield a
 
 main :: IO ()
 main = do
@@ -309,9 +315,8 @@ main = do
                                 return Nothing
       sigProducer = produceSignatureTable MD5 MD5 (blockSize' 10)
   putStrLn "Begin: signature table chunk sizes"
-  yieldMany (chunks 200 toOverwrite) $$ sigProducer $= awaitForever (liftIO . print . BS.length)
+  st <- yieldMany (chunks 200 toOverwrite) $$ sigProducer $= tap BS.length $= consumeSignatureTable
   putStrLn "End: signatureTable chunk sizes"
-  st <- yieldMany (chunks 200 toOverwrite) $$ sigProducer $= consumeSignatureTable
   putStrLn "Begin: patch"
   yield with $$ patchComputer' st $= awaitForever (liftIO . print)
   putStrLn "End: patch"
@@ -326,6 +331,7 @@ main = do
      argv0 <- getProgName
      putStrLn $ "Usage: " ++ argv0 ++ " DATFILE SIGFILE"
 
+#ifndef __GHCJS__
 go :: String -> String -> IO ()
 go dat sig = do
   l <- runResourceT $ sourceFile (FP.decodeString sig) $$ consumeSignatureTable
@@ -336,6 +342,10 @@ go dat sig = do
     else do
       bs <- BSL.readFile dat
       mapM_ yield (BSL.toChunks bs) $$ {- (awaitForever $ \b -> do { liftIO $ print $ BS.length b; yield b }) $= -} patchComputer' l $= (awaitForever $ liftIO . printChunk)
+#else
+go :: String -> String -> IO ()
+go _ _ = return ()
+#endif
 
 printChunk :: (MonadIO m) => Chunk -> m ()
 printChunk (Data bytes) =  liftIO $ putStrLn $ "Data " ++ show (BSL.length bytes)

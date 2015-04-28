@@ -15,18 +15,17 @@ build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
 
-executable ssync
-  Main-is: Main.hs
+library
+  exposed-modules:   SSync.PatchApplier
+                   , SSync.PatchComputer
+                   , SSync.SignatureComputer
+                   , SSync.SignatureTable
   other-modules:     SSync.BlockSize
                    , SSync.Chunk
                    , SSync.Constants
                    , SSync.DataQueue
                    , SSync.Hash
-                   , SSync.PatchApplier
-                   , SSync.PatchComputer
                    , SSync.RollingChecksum
-                   , SSync.SignatureComputer
-                   , SSync.SignatureTable
                    , SSync.SignatureTable.Internal
                    , SSync.SimpleQueue
                    , SSync.Util
@@ -48,19 +47,32 @@ executable ssync
   default-language:    Haskell2010
   ghc-options: -O2 -Wall
   if impl(ghcjs)
-     other-modules: Request
-                  , Response
-                  , TSBQueue
-                  , Types
-                  , SSync.JSVector
+     other-modules: SSync.JSVector
                   , SSync.JSVectorM
                   , SSync.JSVector.Internal
-     cpp-options: -DSTUPID_HASH -DSTUPID_VECT -DGHCJS_BROWSER
+     cpp-options: -DSTUPID_HASH -DSTUPID_VECT
      build-depends: crypto-api >=0.13.2 && <0.14
                   , tagged >=0.8.0.1 && <0.9
                   , pureMD5 >= 2.1.2.1 && <2.2
                   , ghcjs-base
   if !impl(ghcjs)
      build-depends: cryptohash >=0.11.6 && <0.12
-                  , system-filepath >=0.4.13.1 && <0.5
   ghc-prof-options: -fprof-auto "-with-rtsopts=-p -s -h -i0.1"
+
+executable ssync
+  Main-is: Main.hs
+  hs-source-dirs: src/main/haskell-exe
+  default-language:    Haskell2010
+  build-depends: base >=4.7 && <4.8
+               , ssync == 0.1.0.0
+               , bytestring >=0.10 && <0.11
+               , conduit-combinators >=0.3 && <0.4
+               , transformers >=0.3 && <0.5
+  if impl(ghcjs)
+    other-modules: Request
+                 , Response
+                 , TSBQueue
+                 , Types
+    cpp-options:  -DGHCJS_BROWSER
+  if !impl(ghcjs)
+    build-depends: system-filepath >=0.4.13.1 && <0.5
