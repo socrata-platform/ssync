@@ -1,6 +1,6 @@
 module SSync.JSVector.Internal where
 
-import Control.Applicative ((<$>))
+import Control.Applicative (Applicative(..))
 
 newtype VectorMonad a = VectorMonad { runVectorMonad :: IO a }
 
