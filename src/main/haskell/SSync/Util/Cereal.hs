@@ -23,7 +23,7 @@ import Data.Maybe (fromMaybe)
 import Data.Serialize.Get (runGetPartial, Result(..), Get, getWord8, getBytes, remaining, lookAhead)
 import Data.Serialize.Put (Putter, putWord8)
 import Data.Text (Text)
-import Data.Text.Encoding (decodeUtf8)
+import Data.Text.Encoding (decodeUtf8With)
 import Data.Typeable (Typeable)
 import Data.Word (Word32)
 
@@ -145,7 +145,7 @@ getShortString :: Get Text
 getShortString = do
   len <- getWord8
   bs <- getBytes $ fromIntegral len
-  return $ decodeUtf8 bs
+  return $ decodeUtf8With (\ _ _ -> Just '\xfffd') bs
 
 -- Cereal's getLazyByteString actually produces a single chunk; we'll
 -- postpone reconstitution until later.  This is named via analogy with

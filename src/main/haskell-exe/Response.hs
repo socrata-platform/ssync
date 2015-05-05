@@ -9,9 +9,9 @@ import Data.Text (Text)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
-import Data.Conduit.Attoparsec (ParseError, errorMessage)
 
 import Types
+import SSync.SignatureTable
 
 data JSResponse
 data JSByteArray
@@ -23,7 +23,7 @@ foreign import javascript unsafe "$r = { id : $1, command : $2, text: $3 } " jsR
 data Response = JobCreated JobId -- ^ Sent in response to a job context; phase is now "gathering signature" or "computing patch" depending on whether the job had a signature.
               | ChunkAccepted JobId -- ^ Sent in response to 'DataChunk'
               | SigComplete JobId -- ^ Sent in response to 'DataFinished' in the "gathering signature" phase.  Phase is now "computing patch".
-              | SigError JobId ParseError -- ^ Sent at any time during "gathering signature"; the job is terminated.
+              | SigError JobId SignatureTableException -- ^ Sent at any time during "gathering signature"; the job is terminated.
               | PatchChunk JobId ByteString -- ^ Sent (asynchronously!) during "computing patch".
               | PatchComplete JobId -- ^ Sent in response to 'DataFinished' in the "computing patch" phase.  Phase is now "terminated".
               | BadSequencing JobId Text -- ^ Sent in response to any unexpected message
@@ -53,7 +53,7 @@ serializeResponse resp =
     JobCreated (JobId jid) -> jsRespNoData jid respCREATED
     ChunkAccepted (JobId jid) -> jsRespNoData jid respCHUNKACCEPTED
     SigComplete (JobId jid) -> jsRespNoData jid respSIGCOMPLETE
-    SigError (JobId jid) msg -> jsRespText jid respSIGERROR $ F.toJSString $ errorMessage msg
+    SigError (JobId jid) msg -> jsRespText jid respSIGERROR $ F.toJSString $ show msg -- it'd be nice to JSONify this instead of just showing it
     PatchChunk (JobId jid) bs -> uint8ArrayOfByteString bs >>= jsRespData jid respPATCHCHUNK
     PatchComplete (JobId jid) -> jsRespNoData jid respPATCHCOMPLETE
     BadSequencing (JobId jid) msg -> jsRespText jid respBADSEQ $ F.toJSString msg

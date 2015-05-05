@@ -1,0 +1,1 @@
+../../../dist/build/datasync-worker/datasync-worker.jsexe/all.js

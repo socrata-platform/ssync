@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings, MultiWayIf #-}
 
-module Request (Request(..), JobHasSig(..), ResponseFeed(..), extractRequest) where
+module Request (Request(..), ResponseFeed(..), extractRequest) where
 
 import qualified GHCJS.Types as T
 import qualified GHCJS.Foreign as F
@@ -26,21 +26,19 @@ foreign import javascript unsafe "$1.buffer" jsByteArrayBuffer :: T.JSRef JSByte
 foreign import javascript unsafe "$1.byteOffset" jsByteArrayOffset :: T.JSRef JSByteArray -> IO Int
 foreign import javascript unsafe "$1.length" jsByteArrayLength :: T.JSRef JSByteArray -> IO Int
 
-data JobHasSig = JobHasSig | JobHasNoSig
-               deriving (Show)
+foreign import javascript unsafe "console.log($1)" consoleLog :: T.JSRef a -> IO ()
 
 data ResponseFeed = ResponseAccepted -- ^ Sent from JS in response to a PatchChunk message
                   deriving (Show)
 
-data Request = NewJob JobId Int JobHasSig -- ^ Establish a job context; 'JobCreated' is sent in response.
+data Request = NewJob JobId Int -- ^ Establish a job context; 'JobCreated' is sent in response.
              | TerminateJob JobId -- ^ Terminate a job context prematurely; nothing is sent back.
              | DataJob JobId DataFeed -- ^ See 'DataFeed'
              | ResponseJob JobId ResponseFeed -- ^ See 'ResponseFeed'
              deriving (Show)
 
-reqNEW, reqNEWFAKESIG, reqTERMINATE, reqDATA, reqDATADONE, reqRESPACCEPTED :: Text
+reqNEW, reqTERMINATE, reqDATA, reqDATADONE, reqRESPACCEPTED :: Text
 reqNEW = "NEW"
-reqNEWFAKESIG = "NEWFAKESIG"
 reqTERMINATE = "TERM"
 reqDATA = "DATA"
 reqDATADONE = "DONE"
@@ -62,10 +60,7 @@ deserializeRequest jsReq = do
          return $ DataJob jid $ DataChunk bs
      | cmd == reqNEW -> do
          size <- jsReqSize jsReq
-         return $ NewJob jid size JobHasSig
-     | cmd == reqNEWFAKESIG -> do
-         size <- jsReqSize jsReq
-         return $ NewJob jid size JobHasNoSig
+         return $ NewJob jid size
      | cmd == reqTERMINATE ->
          return $ TerminateJob jid
      | cmd == reqDATADONE -> do

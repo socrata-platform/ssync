@@ -1,10 +1,12 @@
 {-# LANGUAGE CPP #-}
 
-#ifdef __zGHCJS__
+#ifdef __GHCJS__
 
 {-# LANGUAGE OverloadedStrings, RecursiveDo, MultiWayIf, RankNTypes, LambdaCase, BangPatterns, ScopedTypeVariables #-}
 
 module Main (main) where
+
+import GHC.Exts( IsString(..) )
 
 import Control.Exception
 import Control.Concurrent hiding (yield)
@@ -26,11 +28,10 @@ import Data.Bits
 import Data.Monoid
 
 import Conduit
-import Data.Conduit.Attoparsec
 
 import SSync.SignatureTable
-import SSync.Patch
-import SSync.Hash
+import SSync.PatchComputer
+import SSync.Util.Conduit (rechunk)
 
 import TSBQueue
 import Request
@@ -77,7 +78,7 @@ recvLoop ti = do
 
 gatheringSignature :: TaskInfo -> IO SignatureTable
 gatheringSignature ti = do
-  stE <- recvLoop ti $$ sinkParserEither signatureTableParser
+  stE <- try $ recvLoop ti $$ consumeSignatureTable
   case stE of
    Right st -> do
      sendResponse $ SigComplete (taskJobId ti)
@@ -86,60 +87,6 @@ gatheringSignature ti = do
      sendResponse $ SigError (taskJobId ti) err
      throwIO ThreadKilled
 
-varInt :: Word32 -> BS.Builder
-varInt i = go i
-  where go value =
-          if value < 128
-          then BS.word8 (fromIntegral value)
-          else BS.word8 (fromIntegral value .|. 0x80) <> go (value `shiftR` 7)
-
-serializeChunk :: Chunk -> BSL.ByteString
-serializeChunk (Block i) = BS.toLazyByteString (BS.word8 0 <> varInt i)
-serializeChunk (Data d) = BS.toLazyByteString (BS.word8 1 <> varInt (fromIntegral $ BSL.length d) <> BS.lazyByteString d)
-serializeChunk End = BSL.singleton 255
-
-frame :: (Monad m) => Word32 -> Conduit BSL.ByteString m BSL.ByteString
-frame blockSize = do
-  yield "\003MD5"
-  checksum <- withHashM "MD5" $ do
-    let targetSizeBytes = BS.toLazyByteString $ varInt blockSize
-    mapM_ update $ BSL.toChunks targetSizeBytes
-    lift $ yield targetSizeBytes
-    let loop =
-          lift await >>= \case
-            Just bs -> do
-              mapM_ update $ BSL.toChunks bs
-              lift $ yield bs
-              loop
-            Nothing ->
-              digest
-    loop
-  yield $ BSL.fromStrict checksum
-
-rechunk :: forall m. (MonadIO m) => Int -> Conduit BSL.ByteString m ByteString
-rechunk targetSize = go DL.empty 0
-  where go :: DL.DList BSL.ByteString -> Int64 -> Conduit BSL.ByteString m ByteString
-        go pfx !count =
-          await >>= \case
-            Just bs -> do
-              let allBytes = DL.snoc pfx bs
-                  here = BSL.length bs
-                  !total = count + here
-              if total >= targetSize64
-                then send (asStrict allBytes)
-                else go allBytes total
-            Nothing -> do
-              let bs = asStrict pfx
-              unless (BS.null bs) $ yield bs
-        asStrict = mconcat . concatMap BSL.toChunks . DL.toList
-        targetSize64 = fromIntegral targetSize :: Int64
-        send bs = do
-          let (toSend, toKeep) = BS.splitAt targetSize bs
-          yield toSend
-          if BS.length toKeep >= targetSize
-            then send toKeep
-            else go (DL.singleton $ BSL.fromStrict toKeep) (fromIntegral $ BS.length toKeep)
-
 acceptPatchChunkAck :: TaskInfo -> IO ()
 acceptPatchChunkAck ti = do
   resp <- atomically $ readTQueue (taskResponseQueue ti)
@@ -147,27 +94,23 @@ acceptPatchChunkAck ti = do
    ResponseAccepted -> return ()
 
 sendChunks :: TaskInfo -> Sink ByteString IO ()
-sendChunks ti = await >>= \case
-  Just firstChunk -> do
-    -- in order to maximize parallelism, we want to delay the
-    -- taskResponseQueue read by one chunk.  Thus the await-then-
-    -- awaitForever structure.
-    lift $ sendResponse $ PatchChunk (taskJobId ti) firstChunk
-    awaitForever $ \bytes -> lift $ do
-      acceptPatchChunkAck ti
-      sendResponse $ PatchChunk (taskJobId ti) bytes
-    lift $ acceptPatchChunkAck ti
-  Nothing ->
-    return ()
+sendChunks ti = rechunk (taskTargetChunkSize ti) $= sendloop
+  where sendloop = await >>= \case
+          Just firstChunk -> do
+            -- in order to maximize parallelism, we want to delay the
+            -- taskResponseQueue read by one chunk.  Thus the await-then-
+            -- awaitForever structure.
+            lift $ sendResponse $ PatchChunk (taskJobId ti) firstChunk
+            awaitForever $ \bytes -> lift $ do
+              acceptPatchChunkAck ti
+              sendResponse $ PatchChunk (taskJobId ti) bytes
+            lift $ acceptPatchChunkAck ti
+          Nothing ->
+            return ()
 
 computingPatch :: TaskInfo -> SignatureTable -> IO ()
 computingPatch ti st = do
-  recvLoop ti $$ patchComputer st $= mapC serializeChunk $= frame (stBlockSize st) $= rechunk (taskTargetChunkSize ti) $= sendChunks ti
-  sendResponse $ PatchComplete (taskJobId ti)
-
-nullaryPatch :: TaskInfo -> SignatureTable -> IO ()
-nullaryPatch ti st = do
-  recvLoop ti $$ mapC BSL.fromStrict $= rechunk (stBlockSizeI st) $= (mapC (serializeChunk . Data . BSL.fromStrict) >> yield (serializeChunk End)) $= frame (stBlockSize st) $= rechunk (taskTargetChunkSize ti) $= sendChunks ti
+  recvLoop ti $$ patchComputer st $= sendChunks ti
   sendResponse $ PatchComplete (taskJobId ti)
 
 worker :: (forall a. IO a -> IO a) -> TaskInfo -> IO () -> IO ()
@@ -182,15 +125,13 @@ sizeDataFeed :: DataFeed -> Int
 sizeDataFeed (DataChunk bs) = BS.length bs
 sizeDataFeed DataFinished = 0
 
-createJob :: JobId -> Int -> JobHasSig -> TVar TaskMap -> IO ()
-createJob i targetSize hasSig reg = mask_ $ mdo
+createJob :: JobId -> Int -> TVar TaskMap -> IO ()
+createJob i targetSize reg = mask_ $ mdo
   guard <- newEmptyTMVarIO
   workerQueue <- newTSBQueueIO targetSize sizeDataFeed
   responseQueue <- newTQueueIO
   let taskInfo = initialTaskInfo i targetSize workerQueue responseQueue potentialWorker reg
-      w = case hasSig of
-        JobHasSig -> gatheringSignature taskInfo >>= computingPatch taskInfo
-        JobHasNoSig -> nullaryPatch taskInfo emptySignature
+      w = gatheringSignature taskInfo >>= computingPatch taskInfo
   potentialWorker <- forkIOWithUnmask (\u -> stage0 guard $ worker u taskInfo w)
   join $ atomically $ do
     m <- readTVar reg
@@ -258,8 +199,8 @@ main = do
     req <- extractRequest ev
     -- putStrLn $ "got message from client: " ++ show req
     case req of
-     NewJob i targetSize hasSig ->
-       createJob i targetSize hasSig registrations
+     NewJob i targetSize ->
+       createJob i targetSize registrations
      TerminateJob i ->
        killJob i registrations
      DataJob i df ->
@@ -275,19 +216,12 @@ module Main where
 
 import System.Environment
 
+import qualified Filesystem.Path.CurrentOS as FP
 import qualified Data.ByteString.Lazy as BSL
-import qualified Data.ByteString as BS
-import Control.Monad.IO.Class
--- import Data.Conduit
 import Conduit
 
 import SSync.SignatureTable
-import SSync.SignatureComputer
 import SSync.PatchComputer
-import SSync.PatchApplier
-#ifndef __GHCJS__
-import qualified Filesystem.Path.CurrentOS as FP
-#endif
 
 tap :: (MonadIO m, Show b) => (a -> b) -> Conduit a m a
 tap f = awaitForever $ \a -> do
@@ -296,33 +230,7 @@ tap f = awaitForever $ \a -> do
 
 main :: IO ()
 main = do
-  -- print $ runGet getVarInt "\xa9\xb9\x9f\x05"
-  -- print $ runGet getVarInt "\xbd\x84\xb4\x8f\xc5\x29"
-
-  let toOverwrite = BS.concat (replicate 100001 "abcdefghijklmnopqrs")
-      with = "abcdeqabcdefghijglksfghijdfjglkdfjsgkldjfgabcdeklgfdsjgldfjfghiabcdefghijklmnopqrs"
-      chunks _ "" = []
-      chunks n bs = let (a, b) = BS.splitAt n bs
-                    in a : chunks n b
-      chunkFinder bs num = let start = (fromIntegral bs) * num
-                           in if start < fromIntegral (BS.length toOverwrite)
-                              then do
-                                let chunk = BS.take bs $ BS.drop (fromIntegral start) toOverwrite
-                                putStrLn $ "returning chunk #" ++ show num ++ ": " ++ show chunk
-                                return $ Just chunk
-                              else do
-                                putStrLn "chunk not found :("
-                                return Nothing
-      sigProducer = produceSignatureTable MD5 MD5 (blockSize' 10)
-  putStrLn "Begin: signature table chunk sizes"
-  st <- yieldMany (chunks 200 toOverwrite) $$ sigProducer $= tap BS.length $= consumeSignatureTable
-  putStrLn "End: signatureTable chunk sizes"
-  putStrLn "Begin: patch"
-  yield with $$ patchComputer' st $= awaitForever (liftIO . print)
-  putStrLn "End: patch"
-  xs <- yieldMany (chunks 1024 with) $$ patchComputer st $= patchApplier chunkFinder $= sinkList
-  print xs
-
+  putStrLn "gnu!"
   args <- getArgs
   case args of
    [dat, sig] ->
@@ -331,21 +239,15 @@ main = do
      argv0 <- getProgName
      putStrLn $ "Usage: " ++ argv0 ++ " DATFILE SIGFILE"
 
-#ifndef __GHCJS__
 go :: String -> String -> IO ()
 go dat sig = do
   l <- runResourceT $ sourceFile (FP.decodeString sig) $$ consumeSignatureTable
-  -- print $ smallify l
   if True
     then do
-      runResourceT $ sourceFile (FP.decodeString dat) $$ patchComputer' l $= sinkNull -- (awaitForever $ liftIO . printChunk)
+      runResourceT $ sourceFile (FP.decodeString dat) $$ patchComputer' l $= (awaitForever $ liftIO . printChunk)
     else do
       bs <- BSL.readFile dat
       mapM_ yield (BSL.toChunks bs) $$ {- (awaitForever $ \b -> do { liftIO $ print $ BS.length b; yield b }) $= -} patchComputer' l $= (awaitForever $ liftIO . printChunk)
-#else
-go :: String -> String -> IO ()
-go _ _ = return ()
-#endif
 
 printChunk :: (MonadIO m) => Chunk -> m ()
 printChunk (Data bytes) =  liftIO $ putStrLn $ "Data " ++ show (BSL.length bytes)

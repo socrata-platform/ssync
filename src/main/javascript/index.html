@@ -3,21 +3,23 @@
   <body>
     <script language="javascript" src="jquery-2.1.3.min.js"></script>
     <script language="javascript" src="jquery.cookie.js"></script>
+    <script language="javascript" src="datasync.js"></script>
     <script language="javascript" src="logic.js"></script>
+    <script language="javascript" src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.1.9/ace.js"></script>
     <table>
       <tr>
         <td>
           <table>
-            <tr><td>4x4:</td><td><input id="fourfour"></td></tr>
-            <tr><td>File:</td><td><input type="file" id="input"></td></tr>
-            <tr><td colspan="2"><button id="go" onclick="go();">Go</button></td></tr>
-          </table>
-        </td>
-        <td>Control:<br><textarea id="control" style="width:20em; height:8em">{
+            <tr><td>4x4:</td><td><input id="fourfour"></td><td></td></tr>
+            <tr><td>File:</td><td><input type="file" id="input"></td><td></td></tr>
+            <tr><td colspan="3"><div id="control" style="width:60em; height:8em">{
   "csv" : {
     "action" : "replace"
   }
-}</textarea></td>
+}</div><script>var editor = ace.edit("control"); editor.getSession().setMode("ace/mode/json"); editor.getSession().setTabSize(2); editor.getSession().setUseSoftTabs(true);</script></td></tr>
+            <tr><td colspan="2"><button id="go" onclick="go2(editor.getValue());">Go</button></td><td></td></tr>
+          </table>
+        </td>
       </tr>
     </table>
     <div id="message"></div>
