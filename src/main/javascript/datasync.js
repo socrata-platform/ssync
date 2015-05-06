@@ -282,7 +282,16 @@ var DatasyncUpload = (function ($) {
                 }
             }
 
-            var currentProgressTimeout = undefined;
+            // Progress callback management -- this prevents calling
+            // the progress callback more than every 100ms.
+
+            var EmitProgressRate = 100;
+
+            var EmitProgressNoTimeout = 0;     // No progress emitted in the last 100ms
+            var EmitProgressTimeout = 1;       // progress was emitted in the last 100ms, but only once
+            var EmitProgressTimeoutReemit = 2; // progress was emitted in the last 100ms, and another was suppressed
+            var emitProgressState = EmitProgressNoTimeout;
+
             function currentProgress() {
                 return {
                     stage: stage,
@@ -295,13 +304,22 @@ var DatasyncUpload = (function ($) {
             }
 
             function reallyEmitProgress() {
-                currentProgressTimeout = undefined;
                 if(!finished) progress(currentProgress());
             }
 
-            function  emitProgress() {
-                if(currentProgressTimeout === undefined) {
-                    currentProgressTimeout = setTimeout(reallyEmitProgress, 100);
+            function endEmitProgressTimeout() {
+                var reemit = emitProgressState == EmitProgressTimeoutReemit;
+                emitProgressState = EmitProgressNoTimeout;
+                if(reemit && !finished) emitProgress();
+            }
+
+            function emitProgress() {
+                if(emitProgressState == EmitProgressNoTimeout) {
+                    emitProgressState = EmitProgressTimeout;
+                    defer(reallyEmitProgress);
+                    setTimeout(endEmitProgressTimeout, EmitProgressRate);
+                } else if(emitProgressState == EmitProgressTimeout) {
+                    emitProgressState = EmitProgressTimeoutReemit;
                 }
             }
 
