@@ -22,3 +22,6 @@ blockSize' = fromMaybe (error "block size out of bounds") . blockSize
 
 blockSizeWord :: BlockSize -> Word32
 blockSizeWord (BlockSize w) = w
+
+instance Show BlockSize where
+  show (BlockSize bs) = "blockSize' " ++ show bs

@@ -6,6 +6,7 @@ module SSync.SignatureComputer (
 , blockSize
 , blockSize'
 , HashAlgorithm(..)
+, hashForName
 ) where
 
 import Conduit
@@ -13,6 +14,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Monoid ((<>))
 import Data.Serialize.Put (runPut, putWord32be, putByteString)
+import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8)
 import Data.Word (Word32)
@@ -23,6 +25,9 @@ import SSync.Util.Cereal
 import SSync.Constants
 import SSync.BlockSize
 import qualified SSync.RollingChecksum as RC
+
+hashForName :: Text -> Maybe HashAlgorithm
+hashForName = forName
 
 produceAndHash :: (Monad m) => HashState -> ConduitM ByteString ByteString m HashState
 produceAndHash s0 = execStateC s0 $ awaitForever $ \bs -> do

@@ -20,7 +20,7 @@ public class SSync {
 
     private static void helpAndDie() {
         System.out.println("Usage:");
-        System.out.println("  ssync sig [file [outfile]]");
+        System.out.println("  ssync sig [--chk ALGORITHM] [--strong ALGORITHM] [--bs BLOCKSIZE] [file [outfile]]");
         System.out.println("  ssync diff sourceFile [sigfile [outFile]]");
         System.out.println("  ssync patch sourcefile [patchfile [outfile]]");
         System.out.println("  ssync explain-patch [file]");
@@ -54,11 +54,12 @@ public class SSync {
 
     private static void doComputeDiff(InputStream sourceFile, InputStream sigFile, OutputStream patchFile) throws Exception {
         BufferedOutputStream bufferedPatchFile = new BufferedOutputStream(patchFile);
+        SignatureTable signatureTable = new SignatureTable(new BufferedInputStream(sigFile));
         PatchComputer.compute(
                 new BufferedInputStream(sourceFile),
-                new SignatureTable(new BufferedInputStream(sigFile)),
-                "MD5",
-                102400,
+                signatureTable,
+                signatureTable.checksumAlgorithmName,
+                signatureTable.blockSize * 4,
                 bufferedPatchFile);
         bufferedPatchFile.flush();
     }
@@ -119,20 +120,60 @@ public class SSync {
         bufferedTargetFile.flush();
     }
 
+    private static class ParsedArgs {
+        int blockSize = 102400;
+        String checksumAlgorithmName = "MD5";
+        String strongHashAlgorithmName = "MD5";
+        String[] remainingArgs;
+
+        ParsedArgs(String[] initialArgs) {
+            remainingArgs = initialArgs;
+        }
+
+        void shift(int count) {
+            String[] newRemainingArgs = new String[remainingArgs.length - count];
+            System.arraycopy(remainingArgs, count, newRemainingArgs, 0, remainingArgs.length - count);
+            remainingArgs = newRemainingArgs;
+        }
+
+        String nextParam() {
+            if(remainingArgs.length < 2) helpAndDie();
+            String result = remainingArgs[1];
+            shift(2);
+            return result;
+        }
+    }
+
+    private static ParsedArgs parseArgs(ParsedArgs args) {
+        while(args.remainingArgs.length > 0) {
+            if(args.remainingArgs[0].equals("--chk")) {
+                args.checksumAlgorithmName = args.nextParam();
+            } else if(args.remainingArgs[0].equals("--strong")) {
+                args.strongHashAlgorithmName = args.nextParam();
+            } else if(args.remainingArgs[0].equals("--bs")) {
+                args.blockSize = Integer.parseInt(args.nextParam());
+            } else {
+                break;
+            }
+        }
+        return args;
+    }
+
     private static void computeSignature(String[] args) throws Exception {
-        switch(args.length) {
+        ParsedArgs parsedArgs = parseArgs(new ParsedArgs(args));
+        switch(parsedArgs.remainingArgs.length) {
             case 0:
-                doComputeSignature(System.in, System.out);
+                doComputeSignature(parsedArgs, System.in, System.out);
                 break;
             case 1:
-                try(FileInputStream in = new FileInputStream(args[0])) {
-                    doComputeSignature(in, System.out);
+                try(FileInputStream in = new FileInputStream(parsedArgs.remainingArgs[0])) {
+                    doComputeSignature(parsedArgs, in, System.out);
                 }
                 break;
             case 2:
-                try(FileInputStream in = new FileInputStream(args[0]);
-                    FileOutputStream out = new FileOutputStream(args[1])) {
-                    doComputeSignature(in, out);
+                try(FileInputStream in = new FileInputStream(parsedArgs.remainingArgs[0]);
+                    FileOutputStream out = new FileOutputStream(parsedArgs.remainingArgs[1])) {
+                    doComputeSignature(parsedArgs, in, out);
                 }
                 break;
             default:
@@ -140,9 +181,9 @@ public class SSync {
         }
     }
 
-    private static void doComputeSignature(InputStream in, OutputStream out) throws Exception {
+    private static void doComputeSignature(ParsedArgs parsedArgs, InputStream in, OutputStream out) throws Exception {
         BufferedOutputStream bufferedOut = new BufferedOutputStream(out);
-        SignatureComputer.compute("MD5", "MD5", 10240, in, bufferedOut);
+        SignatureComputer.compute(parsedArgs.checksumAlgorithmName, parsedArgs.strongHashAlgorithmName, parsedArgs.blockSize, in, bufferedOut);
         bufferedOut.flush();
     }
 }

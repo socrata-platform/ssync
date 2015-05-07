@@ -33,6 +33,7 @@ public class SignatureTable {
         }
     }
 
+    public final String checksumAlgorithmName;
     private final Entry[] allEntries;
     private final int[] entries = new int[1 << 17]; // entries is a list of (start, end) slices of allEntries
     public final int blockSize;
@@ -97,11 +98,11 @@ public class SignatureTable {
             throw new InvalidBlockSize(blockSize);
         }
 
-        String algorithmName = in.readShortUTF8();
+        checksumAlgorithmName = in.readShortUTF8();
         try {
-            strongHasher = MessageDigest.getInstance(algorithmName);
+            strongHasher = MessageDigest.getInstance(checksumAlgorithmName);
         } catch(NoSuchAlgorithmException e) {
-            throw new UnknownStrongHashAlgorithm(algorithmName);
+            throw new UnknownStrongHashAlgorithm(checksumAlgorithmName);
         }
         int signatureBlockSize = in.readInt();
         if(signatureBlockSize <= 0 || signatureBlockSize > MaxSignatureBlockSize) {

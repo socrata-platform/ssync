@@ -15,6 +15,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
 import Data.Word (Word32, Word8)
+import Data.Int (Int8)
 
 data RollingChecksum = RC { _rcBlockSize :: {-# UNPACK #-} !Word32
                           , _rc :: {-# UNPACK #-} !Word32
@@ -40,23 +41,31 @@ forBlock RC{_rcBlockSize} bs =
       b = bSum _rcBlockSize bs .&. 0xffff
   in RC{ _rc = a + (b `shiftL` 16), .. }
 
+-- | This is a due to a stupid bug in the Java implementation; Java bytes are
+-- signed, and so when they're extended to word-size they need to fill
+-- the upper bits appropriately.  The bug does not affect the
+-- "rolling" property of the rolling checksum, which is why it wasn't
+-- detected until now.
+signExtend :: Word8 -> Word32
+signExtend = (fromIntegral :: Int8 -> Word32) . (fromIntegral :: Word8 -> Int8)
+
 aSum :: Word32 -> ByteString -> Word32
 aSum blockSize bs = go 0 0
   where limit = BS.length bs `min` fromIntegral blockSize
-        go !i !a | i < limit = go (i+1) (a + fromIntegral (BS.unsafeIndex bs i))
+        go !i !a | i < limit = go (i+1) (a + signExtend (BS.unsafeIndex bs i))
                  | otherwise = a
 
 bSum :: Word32 -> ByteString -> Word32
 bSum blockSize bs = go 0 0
   where limit = BS.length bs `min` fromIntegral blockSize
         go :: Int -> Word32 -> Word32
-        go !i !b | i < limit = go (i+1) (b + (blockSize - fromIntegral i) * fromIntegral (BS.unsafeIndex bs i))
+        go !i !b | i < limit = go (i+1) (b + (blockSize - fromIntegral i) * signExtend (BS.unsafeIndex bs i))
                  | otherwise = b
 
 roll :: RollingChecksum -> Word8 -> Word8 -> RollingChecksum
 roll RC{..} oldByte newByte =
-  let ob = fromIntegral oldByte
-      a = ((_rc .&. 0xffff) - ob + fromIntegral newByte) .&. 0xffff
+  let ob = signExtend oldByte
+      a = ((_rc .&. 0xffff) - ob + signExtend newByte) .&. 0xffff
       b = ((_rc `shiftR` 16) - _rcBlockSize * ob + a) .&. 0xffff
   in RC { _rc = a + (b `shiftL` 16), .. }
 {-# INLINE roll #-}
