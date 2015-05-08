@@ -10,14 +10,14 @@
       <tr>
         <td>
           <table>
-            <tr><td>4x4:</td><td><input id="fourfour"></td><td></td></tr>
-            <tr><td>File:</td><td><input type="file" id="input"></td><td></td></tr>
-            <tr><td colspan="3"><div id="control" style="width:60em; height:8em">{
+            <tr><td align="right">4x4:</td><td><input id="fourfour"></td><td></td></tr>
+            <tr><td align="right">File:</td><td><input type="file" id="input"></td><td></td></tr>
+            <tr><td valign="top" align="right">Control:</td><td colspan="2"><div id="control" style="width:60em; height:8em">{
   "csv" : {
     "action" : "replace"
   }
-}</div><script>var editor = ace.edit("control"); editor.getSession().setMode("ace/mode/json"); editor.getSession().setTabSize(2); editor.getSession().setUseSoftTabs(true);</script></td></tr>
-            <tr><td colspan="2"><button id="go" onclick="go2(editor.getValue());">Go</button></td><td></td></tr>
+}</div></td></tr>
+            <tr><td align="right"><button id="go" onclick="go();">Go</button></td><td></td></tr>
           </table>
         </td>
       </tr>
