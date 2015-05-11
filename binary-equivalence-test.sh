@@ -91,15 +91,15 @@ function diffpatch {
 }
 
 function run {
-    local label="test-$1"
-    local chk="$2"
-    local strong="$3"
+    local chk="$1"
+    local strong="$2"
+    local label="$chk-$strong"
 
     mkdir "$tmpDir/$label"
 
     echo "Signatures"
-    hsexe sig --chk MD5 --strong MD5 --bs $BS "$tmpDir/bits" "$tmpDir/$label/bits.ssig-hs"
-    jvexe sig --chk MD5 --strong MD5 --bs $BS "$tmpDir/bits" "$tmpDir/$label/bits.ssig-jv"
+    hsexe sig --chk "$chk" --strong "$strong" --bs $BS "$tmpDir/bits" "$tmpDir/$label/bits.ssig-hs"
+    jvexe sig --chk "$chk" --strong "$strong" --bs $BS "$tmpDir/bits" "$tmpDir/$label/bits.ssig-jv"
     check "$tmpDir/$label/bits.ssig-hs" "$tmpDir/$label/bits.ssig-jv"
 
     echo "No change"
@@ -130,6 +130,6 @@ function run {
     diffpatch "$label" bits-reverse
 }
 
-run samehash MD5 MD5
-run dhash1 MD5 SHA1
-run dhash2 SHA1 MD5
+run MD5 MD5
+run MD5 SHA1
+run SHA1 MD5

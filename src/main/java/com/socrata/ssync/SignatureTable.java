@@ -91,18 +91,20 @@ public class SignatureTable {
     }
 
     public SignatureTable(InputStream inStream) throws IOException, InputException, SignatureException {
-        InputStreamReadHelper in = new InputStreamReadHelper(inStream, InputStreamReadHelper.readChecksumAlgorithm(inStream));
+        MessageDigest checksumAlgorithm = InputStreamReadHelper.readChecksumAlgorithm(inStream);
+        checksumAlgorithmName = checksumAlgorithm.getAlgorithm();
+        InputStreamReadHelper in = new InputStreamReadHelper(inStream, checksumAlgorithm);
 
         blockSize = in.readInt();
         if(blockSize <= 0 || blockSize > Patch.MaxBlockSize) {
             throw new InvalidBlockSize(blockSize);
         }
 
-        checksumAlgorithmName = in.readShortUTF8();
+        String strongHashAlgorithmName = in.readShortUTF8();
         try {
-            strongHasher = MessageDigest.getInstance(checksumAlgorithmName);
+            strongHasher = MessageDigest.getInstance(strongHashAlgorithmName);
         } catch(NoSuchAlgorithmException e) {
-            throw new UnknownStrongHashAlgorithm(checksumAlgorithmName);
+            throw new UnknownStrongHashAlgorithm(strongHashAlgorithmName);
         }
         int signatureBlockSize = in.readInt();
         if(signatureBlockSize <= 0 || signatureBlockSize > MaxSignatureBlockSize) {
