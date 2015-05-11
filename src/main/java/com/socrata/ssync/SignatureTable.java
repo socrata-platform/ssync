@@ -33,6 +33,7 @@ public class SignatureTable {
         }
     }
 
+    public final String checksumAlgorithmName;
     private final Entry[] allEntries;
     private final int[] entries = new int[1 << 17]; // entries is a list of (start, end) slices of allEntries
     public final int blockSize;
@@ -90,18 +91,20 @@ public class SignatureTable {
     }
 
     public SignatureTable(InputStream inStream) throws IOException, InputException, SignatureException {
-        InputStreamReadHelper in = new InputStreamReadHelper(inStream, InputStreamReadHelper.readChecksumAlgorithm(inStream));
+        InputStreamReadHelper.MessageDigestAndOriginalName checksumInfo = InputStreamReadHelper.readChecksumAlgorithm(inStream);
+        checksumAlgorithmName = checksumInfo.originalName;
+        InputStreamReadHelper in = new InputStreamReadHelper(inStream, checksumInfo.messageDigest);
 
         blockSize = in.readInt();
         if(blockSize <= 0 || blockSize > Patch.MaxBlockSize) {
             throw new InvalidBlockSize(blockSize);
         }
 
-        String algorithmName = in.readShortUTF8();
+        String strongHashAlgorithmName = in.readShortUTF8();
         try {
-            strongHasher = MessageDigest.getInstance(algorithmName);
+            strongHasher = MessageDigest.getInstance(strongHashAlgorithmName);
         } catch(NoSuchAlgorithmException e) {
-            throw new UnknownStrongHashAlgorithm(algorithmName);
+            throw new UnknownStrongHashAlgorithm(strongHashAlgorithmName);
         }
         int signatureBlockSize = in.readInt();
         if(signatureBlockSize <= 0 || signatureBlockSize > MaxSignatureBlockSize) {

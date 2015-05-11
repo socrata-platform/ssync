@@ -19,7 +19,7 @@ public class PatchApplier {
     private final byte[] dataBuf;
 
     private PatchApplier(BlockFinder blockFinder, InputStream patch, OutputStream target) throws IOException, PatchException, InputException {
-        this.in = new InputStreamReadHelper(patch, InputStreamReadHelper.readChecksumAlgorithm(patch));
+        this.in = new InputStreamReadHelper(patch, InputStreamReadHelper.readChecksumAlgorithm(patch).messageDigest);
         this.blockFinder = blockFinder;
         this.target = target;
 
