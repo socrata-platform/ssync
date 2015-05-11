@@ -91,9 +91,9 @@ public class SignatureTable {
     }
 
     public SignatureTable(InputStream inStream) throws IOException, InputException, SignatureException {
-        MessageDigest checksumAlgorithm = InputStreamReadHelper.readChecksumAlgorithm(inStream);
-        checksumAlgorithmName = checksumAlgorithm.getAlgorithm();
-        InputStreamReadHelper in = new InputStreamReadHelper(inStream, checksumAlgorithm);
+        InputStreamReadHelper.MessageDigestAndOriginalName checksumInfo = InputStreamReadHelper.readChecksumAlgorithm(inStream);
+        checksumAlgorithmName = checksumInfo.originalName;
+        InputStreamReadHelper in = new InputStreamReadHelper(inStream, checksumInfo.messageDigest);
 
         blockSize = in.readInt();
         if(blockSize <= 0 || blockSize > Patch.MaxBlockSize) {

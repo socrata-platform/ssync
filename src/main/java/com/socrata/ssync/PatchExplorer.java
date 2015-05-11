@@ -81,7 +81,7 @@ public class PatchExplorer implements Iterator<PatchExplorer.Event> {
     }
 
     public PatchExplorer(InputStream patch) throws IOException, InputException {
-        this.in = new InputStreamReadHelper(patch, InputStreamReadHelper.readChecksumAlgorithm(patch));
+        this.in = new InputStreamReadHelper(patch, InputStreamReadHelper.readChecksumAlgorithm(patch).messageDigest);
         pendingEvents.add(new ChecksumAlgorithmEvent(in.checksumAlgorithm()));
 
         int blockSize = in.readInt();

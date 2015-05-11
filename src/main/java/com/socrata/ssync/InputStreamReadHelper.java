@@ -20,14 +20,24 @@ final class InputStreamReadHelper {
         this.md = md;
     }
 
-    static MessageDigest readChecksumAlgorithm(InputStream in) throws IOException, InputException {
+    static class MessageDigestAndOriginalName {
+        final MessageDigest messageDigest;
+        final String originalName; // This may be different from md.getAlgorithm, since the original may be a non-canoncical name
+
+        MessageDigestAndOriginalName(MessageDigest md, String originalName) {
+            this.messageDigest = md;
+            this.originalName = originalName;
+        }
+    }
+
+    static MessageDigestAndOriginalName readChecksumAlgorithm(InputStream in) throws IOException, InputException {
         int mdNameLen = in.read();
         if(mdNameLen == -1) throw new UnexpectedEOF();
         byte[] mdNameBytes = new byte[mdNameLen];
         readFullyWithoutUpdatingChecksum(in, mdNameBytes);
         String mdName = new String(mdNameBytes, StandardCharsets.UTF_8);
         try {
-            return MessageDigest.getInstance(mdName);
+            return new MessageDigestAndOriginalName(MessageDigest.getInstance(mdName), mdName);
         } catch (NoSuchAlgorithmException e) {
             throw new UnknownChecksumAlgorithm(mdName);
         }
