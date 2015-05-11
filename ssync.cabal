@@ -61,30 +61,16 @@ library
      build-depends: cryptohash >=0.11.6 && <0.12
   ghc-prof-options: -fprof-auto "-with-rtsopts=-p -s -h -i0.1"
 
-executable datasync-worker
+executable ssync
   Main-is: Main.hs
   hs-source-dirs: src/main/haskell-exe
   default-language:    Haskell2010
   build-depends: base >=4.7 && <4.8
-               , ssync == 0.1.0.0
-  if impl(ghcjs)
-    other-modules: Request
-                 , Response
-                 , TSBQueue
-                 , Types
-    cpp-options:  -DGHCJS_BROWSER
-    build-depends: ghcjs-base
-                 , bytestring >=0.10 && <0.11
-                 , conduit-combinators >=0.3 && <0.4
-                 , containers >= 0.5.5.1 && <0.6
-                 , dlist >=0.7.0.1 && <0.8
-                 , stm >=2.4.3 && <2.5
-                 , text >= 1.1.1.3 && <1.3
-  if !impl(ghcjs)
-    build-depends: system-filepath >=0.4.13.1 && <0.5
-                 , system-fileio >=0.3.16.2 && <0.4
-                 , bytestring >=0.10 && <0.11
-                 , conduit-combinators >=0.3 && <0.4
-                 , optparse-applicative >= 0.11.0.2 && <0.12
-                 , resourcet >= 1.1.4.1 && <1.2
-                 , text >= 1.2.0.4 && <1.3
+               , bytestring >=0.10 && <0.11
+               , conduit-combinators >=0.3 && <0.4
+               , optparse-applicative >= 0.11.0.2 && <0.12
+               , resourcet >= 1.1.4.1 && <1.2
+               , ssync
+               , system-fileio >=0.3.16.2 && <0.4
+               , system-filepath >=0.4.13.1 && <0.5
+               , text >= 1.1.1.3 && <1.3
