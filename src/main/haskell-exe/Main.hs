@@ -1,12 +1,3 @@
-{-# LANGUAGE CPP #-}
-
-#ifdef __GHCJS__
-
-main :: IO ()
-main = putStrLn "ghcjs not supported"
-
-#else
-
 {-# LANGUAGE OverloadedStrings, LambdaCase #-}
 module Main where
 
@@ -124,5 +115,3 @@ main = execParser (info (helper <*> commandParser) fullDesc) >>= \case
               then return Nothing
               else return $ Just result
       stdinOr diffOpt $$ patchApplier chunkProvider $= stdoutOr outOpt
-
-#endif
