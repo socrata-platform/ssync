@@ -85,7 +85,7 @@ patchOptions = PatchOptions <$> argument file (metavar "INFILE" <> action "file"
                             <*> optional (argument file (metavar "OUTFILE" <> action "file"))
 
 commandParser :: Parser Command
-commandParser = subparser (
+commandParser = hsubparser (
   command "sig" (info (GenerateSignature <$> sigOptions) (progDesc "Generate a signature from a file")) <>
   command "diff" (info (GenerateDiff <$> diffOptions) (progDesc "Generate a patch from a file and a signature")) <>
   command "patch" (info (ApplyPatch <$> patchOptions) (progDesc "Apply a patch to a file to produce a new file"))
