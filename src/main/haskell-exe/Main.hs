@@ -71,18 +71,18 @@ sigOptions :: Parser SigOptions
 sigOptions = SigOptions <$> optional (option hashAlg (long "chk" <> metavar "ALGORITHM" <> help "Checksum algorithm"))
                         <*> optional (option hashAlg (long "strong" <> metavar "ALGORITHM" <> help "Strong hash algorithm"))
                         <*> optional (option blkSz (long "bs" <> metavar "BLOCKSIZE" <> help "Block size"))
-                        <*> optional (argument file (metavar "INFILE"))
-                        <*> optional (argument file (metavar "OUTFILE"))
+                        <*> optional (argument file (metavar "INFILE" <> action "file"))
+                        <*> optional (argument file (metavar "OUTFILE" <> action "file"))
 
 diffOptions :: Parser DiffOptions
-diffOptions = DiffOptions <$> argument file (metavar "INFILE")
-                          <*> optional (argument file (metavar "SIGFILE"))
-                          <*> optional (argument file (metavar "OUTFILE"))
+diffOptions = DiffOptions <$> argument file (metavar "INFILE" <> action "file")
+                          <*> optional (argument file (metavar "SIGFILE" <> action "file"))
+                          <*> optional (argument file (metavar "OUTFILE" <> action "file"))
 
 patchOptions :: Parser PatchOptions
-patchOptions = PatchOptions <$> argument file (metavar "INFILE")
-                            <*> optional (argument file (metavar "PATCHFILE"))
-                            <*> optional (argument file (metavar "OUTFILE"))
+patchOptions = PatchOptions <$> argument file (metavar "INFILE" <> action "file")
+                            <*> optional (argument file (metavar "PATCHFILE" <> action "file"))
+                            <*> optional (argument file (metavar "OUTFILE" <> action "file"))
 
 commandParser :: Parser Command
 commandParser = subparser (
