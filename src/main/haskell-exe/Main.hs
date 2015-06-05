@@ -26,9 +26,9 @@ tap f = awaitForever $ \a -> do
   liftIO . putStrLn . show $ f a
   yield a
 
-data SigOptions = SigOptions { sigChecksumAlgorithm :: Maybe HashAlgorithm
-                             , sigStrongHashAlgorithm :: Maybe HashAlgorithm
-                             , sigBlockSize :: Maybe BlockSize
+data SigOptions = SigOptions { sigChecksumAlgorithm :: HashAlgorithm
+                             , sigStrongHashAlgorithm :: HashAlgorithm
+                             , sigBlockSize :: BlockSize
                              , sigInFile :: Maybe FilePath
                              , sigOutFile :: Maybe FilePath
                              } deriving (Show)
@@ -68,9 +68,9 @@ file :: ReadM FilePath
 file = FP.fromText . T.pack <$> str
 
 sigOptions :: Parser SigOptions
-sigOptions = SigOptions <$> optional (option hashAlg (long "chk" <> metavar "ALGORITHM" <> help "Checksum algorithm"))
-                        <*> optional (option hashAlg (long "strong" <> metavar "ALGORITHM" <> help "Strong hash algorithm"))
-                        <*> optional (option blkSz (long "bs" <> metavar "BLOCKSIZE" <> help "Block size"))
+sigOptions = SigOptions <$> option hashAlg (long "chk" <> metavar "ALGORITHM" <> help "Checksum algorithm" <> value MD5 <> showDefault <> completeWith (map show [minBound :: HashAlgorithm .. maxBound]))
+                        <*> option hashAlg (long "strong" <> metavar "ALGORITHM" <> help "Strong hash algorithm" <> value MD5 <> showDefault <> completeWith (map show [minBound :: HashAlgorithm .. maxBound]))
+                        <*> option blkSz (long "bs" <> metavar "BLOCKSIZE" <> help "Block size" <> value (blockSize' 102400) <> showDefaultWith (show . blockSizeWord))
                         <*> optional (argument file (metavar "INFILE" <> action "file"))
                         <*> optional (argument file (metavar "OUTFILE" <> action "file"))
 
@@ -100,7 +100,7 @@ stdoutOr = maybe stdoutC sinkFile
 main :: IO ()
 main = execParser (info (helper <*> commandParser) fullDesc) >>= \case
   GenerateSignature (SigOptions chkAlg strongAlg bs inOpt outOpt) ->
-    runResourceT $ stdinOr inOpt $$ produceSignatureTable (fromMaybe MD5 chkAlg) (fromMaybe MD5 strongAlg) (fromMaybe (blockSize' 102400) bs) $= stdoutOr outOpt
+    runResourceT $ stdinOr inOpt $$ produceSignatureTable chkAlg strongAlg bs $= stdoutOr outOpt
   GenerateDiff (DiffOptions inFile sigOpt outOpt) ->
     runResourceT $ do
       st <- stdinOr sigOpt $$ consumeSignatureTable

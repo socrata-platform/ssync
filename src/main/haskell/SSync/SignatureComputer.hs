@@ -5,6 +5,7 @@ module SSync.SignatureComputer (
 , BlockSize
 , blockSize
 , blockSize'
+, blockSizeWord
 , HashAlgorithm(..)
 , hashForName
 ) where

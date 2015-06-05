@@ -34,7 +34,7 @@ import qualified Data.Digest.Pure.MD5 as MD5 -- pureMD5 is 10x faster than Crypt
 import Data.Serialize (encode)
 import Data.Tagged (untag, Tagged)
 
-data HashAlgorithm = MD5 deriving (Read, Show, Eq, Ord)
+data HashAlgorithm = MD5 deriving (Read, Show, Eq, Ord, Bounded, Enum)
 
 initState :: HashAlgorithm -> HashState
 initState MD5 = fromCtx MD5.initialCtx DL.empty targetBlockSizeBytes
@@ -69,7 +69,7 @@ forName _ = Nothing
 import qualified Crypto.Hash as C
 import Data.Byteable (toBytes)
 
-data HashAlgorithm = MD4 | MD5 | SHA1 | SHA256 | SHA512 deriving (Read, Show, Eq, Ord)
+data HashAlgorithm = MD4 | MD5 | SHA1 | SHA256 | SHA512 deriving (Read, Show, Eq, Ord, Bounded, Enum)
 
 initState :: HashAlgorithm -> HashState
 initState alg = result
