@@ -161,7 +161,7 @@ function diffpatch {
 function run {
     local chk="$1"
     local strong="$2"
-    local label="$chk-$strong"
+    local label="$chk + $strong"
 
     mkdir "$tmpDir/$label"
 
