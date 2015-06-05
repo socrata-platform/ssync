@@ -49,9 +49,11 @@ data Command = GenerateSignature SigOptions
              deriving Show
 
 hashAlg :: ReadM HashAlgorithm
-hashAlg = (hashForName . T.pack <$> str) >>= \case
-  Just ha -> return ha
-  Nothing -> readerError "Unknown hash algorithm"
+hashAlg = do
+  rawName <- str
+  case hashForName (T.pack rawName) of
+    Just ha -> return ha
+    Nothing -> readerError $ "Unknown hash algorithm " ++ rawName
 
 blkSz :: ReadM BlockSize
 blkSz = do
@@ -68,8 +70,8 @@ file :: ReadM FilePath
 file = FP.fromText . T.pack <$> str
 
 sigOptions :: Parser SigOptions
-sigOptions = SigOptions <$> option hashAlg (long "chk" <> metavar "ALGORITHM" <> help "Checksum algorithm" <> value MD5 <> showDefault <> completeWith (map show [minBound :: HashAlgorithm .. maxBound]))
-                        <*> option hashAlg (long "strong" <> metavar "ALGORITHM" <> help "Strong hash algorithm" <> value MD5 <> showDefault <> completeWith (map show [minBound :: HashAlgorithm .. maxBound]))
+sigOptions = SigOptions <$> option hashAlg (long "chk" <> metavar "ALGORITHM" <> help "Checksum algorithm" <> value MD5 <> showDefault <> completeWith (map (T.unpack . nameForHash) [minBound .. maxBound]))
+                        <*> option hashAlg (long "strong" <> metavar "ALGORITHM" <> help "Strong hash algorithm" <> value MD5 <> showDefault <> completeWith (map (T.unpack . nameForHash) [minBound .. maxBound]))
                         <*> option blkSz (long "bs" <> metavar "BLOCKSIZE" <> help "Block size" <> value (blockSize' 102400) <> showDefaultWith (show . blockSizeWord))
                         <*> optional (argument file (metavar "INFILE" <> action "file"))
                         <*> optional (argument file (metavar "OUTFILE" <> action "file"))

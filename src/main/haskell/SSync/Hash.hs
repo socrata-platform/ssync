@@ -2,6 +2,7 @@
 
 module SSync.Hash (
   forName
+, name
 , HashAlgorithm(..)
 , HashState
 , HashT
@@ -64,6 +65,9 @@ forName :: Text -> Maybe HashAlgorithm
 forName "MD5" = Just MD5
 forName _ = Nothing
 
+name :: HashAlgorithm -> Text
+name MD5 = "MD5"
+
 #else
 
 import qualified Crypto.Hash as C
@@ -92,9 +96,17 @@ forName :: Text -> Maybe HashAlgorithm
 forName "MD4" = Just MD4
 forName "MD5" = Just MD5
 forName "SHA1" = Just SHA1
-forName "SHA256" = Just SHA256
-forName "SHA512" = Just SHA512
+forName "SHA-1" = Just SHA1
+forName "SHA-256" = Just SHA256
+forName "SHA-512" = Just SHA512
 forName _ = Nothing
+
+name :: HashAlgorithm -> Text
+name MD4 = "MD4"
+name MD5 = "MD5"
+name SHA1 = "SHA1" -- compat with Java which omits the dash
+name SHA256 = "SHA-256"
+name SHA512 = "SHA-512"
 
 #endif
 

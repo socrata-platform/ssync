@@ -53,7 +53,7 @@ atLeastBlockSizeOrEnd target pfx = go (DL.singleton pfx) (BS.length pfx)
 -- of the chunk stream.
 fromChunks :: (Monad m) => HashAlgorithm -> Word32 -> Conduit Chunk m ByteString
 fromChunks checksumAlg blockSize = do
-  let checksumAlgName = encodeUtf8 . T.pack . show $ checksumAlg
+  let checksumAlgName = encodeUtf8 . name $ checksumAlg
   yield $ BS.singleton (fromIntegral $ BS.length checksumAlgName) <> checksumAlgName
   checksum <- withHashT checksumAlg $ do
     let loop i acc | i > 1000 = do

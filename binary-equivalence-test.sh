@@ -46,7 +46,7 @@ cabal build
 sbt clean package
 
 function hsexe {
-    dist/build/datasync-worker/datasync-worker "$@"
+    dist/build/ssync/ssync "$@"
 }
 function jvexe {
     java -jar target/ssync-*.jar "$@"
@@ -187,6 +187,10 @@ function run {
     diffpatch "$label" "Reverse" bits-reverse
 }
 
-run MD5 MD5
-run MD5 SHA1
-run SHA1 MD5
+hashes=(MD5 SHA1 SHA-256 SHA-512)
+
+for hash_a in "${hashes[@]}"; do
+    for hash_b in "${hashes[@]}"; do
+        run "$hash_a" "$hash_b"
+    done
+done

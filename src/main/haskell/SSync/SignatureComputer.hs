@@ -8,6 +8,7 @@ module SSync.SignatureComputer (
 , blockSizeWord
 , HashAlgorithm(..)
 , hashForName
+, nameForHash
 ) where
 
 import Conduit
@@ -29,6 +30,9 @@ import qualified SSync.RollingChecksum as RC
 
 hashForName :: Text -> Maybe HashAlgorithm
 hashForName = forName
+
+nameForHash :: HashAlgorithm -> Text
+nameForHash = name
 
 produceAndHash :: (Monad m) => HashState -> ConduitM ByteString ByteString m HashState
 produceAndHash s0 = execStateC s0 $ awaitForever $ \bs -> do
@@ -70,13 +74,13 @@ produceSignatureTableUnframed :: (Monad m) => HashAlgorithm -> BlockSize -> Cond
 produceSignatureTableUnframed strongHashAlg (blockSizeWord -> blockSz) = do
   let sigBlockSize = signatureBlockSizeForBlockSize blockSz
   produceVarInt blockSz
-  produceShortString (show strongHashAlg)
+  produceShortString . T.unpack $ name strongHashAlg
   produceVarInt sigBlockSize
   rechunk (fromIntegral blockSz) $= sigs blockSz sigBlockSize strongHashAlg
 
 produceSignatureTable :: (Monad m) => HashAlgorithm -> HashAlgorithm -> BlockSize -> Conduit ByteString m ByteString
 produceSignatureTable checksumAlg strongHashAlg blockSz = do
-  produceShortString $ show checksumAlg
+  produceShortString . T.unpack $ name checksumAlg
   d <- withHashT checksumAlg $ do
     withHashState' $ \hs -> produceSignatureTableUnframed strongHashAlg blockSz $= produceAndHash hs
     digestS
