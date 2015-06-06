@@ -11,7 +11,6 @@ import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.DList as DL
 import Data.Monoid (mconcat, mempty, (<>))
-import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8)
 import Data.Word (Word32)
 
