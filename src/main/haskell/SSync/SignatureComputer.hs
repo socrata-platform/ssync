@@ -2,6 +2,7 @@
 
 module SSync.SignatureComputer (
   produceSignatureTable
+, signatureTableSize
 , BlockSize
 , blockSize
 , blockSize'
@@ -14,7 +15,7 @@ module SSync.SignatureComputer (
 import Conduit
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Data.Monoid ((<>))
+import Data.Monoid ((<>), Sum(..))
 import Data.Serialize.Put (runPut, putWord32be, putByteString)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -85,3 +86,34 @@ produceSignatureTable checksumAlg strongHashAlg blockSz = do
     withHashState' $ \hs -> produceSignatureTableUnframed strongHashAlg blockSz $= produceAndHash hs
     digestS
   yield d
+
+-- | Returns the length (in bytes) of the signature table that would be computed
+-- for a file of a given length using the given hash algorithms and
+-- block size.  This is useful for (e.g.) setting a @Content-Length@ header on
+-- an HTTP message containing a signature table.
+signatureTableSize :: HashAlgorithm -> HashAlgorithm -> BlockSize -> Integer -> Integer
+signatureTableSize checksumAlg strongHashAlg (blockSizeWord -> blockSz) fileLen =
+  let hashedPart = do
+        produceVarInt blockSz
+        produceShortString . T.unpack $ name strongHashAlg
+        produceVarInt (signatureBlockSizeForBlockSize blockSz)
+      headerFooter = do
+        produceShortString . T.unpack $ name checksumAlg
+        d <- withHashT checksumAlg $ do
+          withHashState' $ \hs -> hashedPart $= produceAndHash hs
+          digestS
+        yield d
+      headerFooterSize = fromIntegral . getSum . runIdentity $ headerFooter $$ foldMapC (Sum . BS.length)
+      sigsPerBlock = fromIntegral $ signatureBlockSizeForBlockSize blockSz
+      blocks = (fileLen `div` fromIntegral blockSz) + partialBlocks
+      partialBlocks = if fileLen `rem` fromIntegral blockSz /= 0
+                      then 1
+                      else 0
+      fullSigBlocks = blocks `div` sigsPerBlock
+      leftoverSigs = blocks `rem` sigsPerBlock
+      sigSize = fromIntegral $ 4 + digestSize strongHashAlg
+      varIntSize i = fromIntegral . getSum . runIdentity $ (produceVarInt (fromIntegral i) $$ foldMapC (Sum . BS.length))
+      fullSigBlockLength = fullSigBlocks * (varIntSize sigsPerBlock + sigsPerBlock * sigSize)
+      partialSigBlockLength = varIntSize leftoverSigs + leftoverSigs * sigSize
+  in headerFooterSize + fullSigBlockLength + partialSigBlockLength
+

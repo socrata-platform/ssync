@@ -21,8 +21,8 @@ library
                    , SSync.SignatureComputer
                    , SSync.SignatureTable
                    , SSync.Util.Conduit
-  other-modules:     SSync.BlockSize
-                   , SSync.Chunk
+                   , SSync.BlockSize
+  other-modules:     SSync.Chunk
                    , SSync.Constants
                    , SSync.DataQueue
                    , SSync.Hash
@@ -60,6 +60,19 @@ library
   if !impl(ghcjs)
      build-depends: cryptohash >=0.11.6 && <0.12
   ghc-prof-options: -fprof-auto "-with-rtsopts=-p -s -h -i0.1"
+
+test-suite test-ssync
+  type: exitcode-stdio-1.0
+  hs-source-dirs:  src/test/haskell
+  default-language: Haskell2010
+  ghc-options: -Wall
+  main-is: Test.hs
+  build-depends: base >=4.7 && <4.8
+               , ssync
+               , conduit-combinators
+               , bytestring
+               , QuickCheck >= 2.8.1 && < 2.9
+               , quickcheck-instances >= 0.3.11 && < 0.4
 
 executable ssync
   Main-is: Main.hs
