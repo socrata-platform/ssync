@@ -71,7 +71,8 @@ test-suite test-ssync
                , ssync
                , conduit-combinators
                , bytestring
-               , QuickCheck >= 2.8.1 && < 2.9
+               , tasty >=0.10.1.2 && <0.11
+               , tasty-quickcheck >=0.8.3.2 && <0.9
                , quickcheck-instances >= 0.3.11 && < 0.4
 
 executable ssync
