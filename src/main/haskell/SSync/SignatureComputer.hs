@@ -15,6 +15,7 @@ module SSync.SignatureComputer (
 import Conduit
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.Ratio ((%))
 import Data.Monoid ((<>), Sum(..))
 import Data.Serialize.Put (runPut, putWord32be, putByteString)
 import Data.Text (Text)
@@ -105,10 +106,7 @@ signatureTableSize checksumAlg strongHashAlg (blockSizeWord -> blockSz) fileLen 
         yield d
       headerFooterSize = fromIntegral . getSum . runIdentity $ headerFooter $$ foldMapC (Sum . BS.length)
       sigsPerBlock = fromIntegral $ signatureBlockSizeForBlockSize blockSz
-      blocks = (fileLen `div` fromIntegral blockSz) + partialBlocks
-      partialBlocks = if fileLen `rem` fromIntegral blockSz /= 0
-                      then 1
-                      else 0
+      blocks = ceiling (fileLen % fromIntegral blockSz)
       fullSigBlocks = blocks `div` sigsPerBlock
       leftoverSigs = blocks `rem` sigsPerBlock
       sigSize = fromIntegral $ 4 + digestSize strongHashAlg
