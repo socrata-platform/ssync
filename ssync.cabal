@@ -73,6 +73,7 @@ test-suite test-ssync
                , bytestring
                , tasty >=0.10.1.2 && <0.11
                , tasty-quickcheck >=0.8.3.2 && <0.9
+               , tasty-ant-xml >=1.0.1 && <1.1
                , quickcheck-instances >= 0.3.11 && < 0.4
 
 executable ssync

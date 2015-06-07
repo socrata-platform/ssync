@@ -2,6 +2,7 @@
 
 import Test.Tasty
 import Test.Tasty.QuickCheck (testProperty, Arbitrary, arbitrary, elements, frequency, choose, shrink)
+import Test.Tasty.Runners.AntXML (antXMLRunner)
 
 import Conduit
 import Control.Applicative ((<$>))
@@ -24,7 +25,7 @@ instance Arbitrary BlockSize where
   shrink bs = mapMaybe (blockSize . fromIntegral) (shrink $ blockSizeWord bs)
 
 main :: IO ()
-main = defaultMain tests
+main = defaultMainWithIngredients (antXMLRunner : defaultIngredients) tests
 
 tests :: TestTree
 tests = testSignatureTableSize
