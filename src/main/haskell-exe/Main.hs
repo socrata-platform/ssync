@@ -21,11 +21,6 @@ import SSync.PatchComputer
 import SSync.SignatureComputer
 import SSync.PatchApplier
 
-tap :: (MonadIO m, Show b) => (a -> b) -> Conduit a m a
-tap f = awaitForever $ \a -> do
-  liftIO . putStrLn . show $ f a
-  yield a
-
 data SigOptions = SigOptions { sigChecksumAlgorithm :: HashAlgorithm
                              , sigStrongHashAlgorithm :: HashAlgorithm
                              , sigBlockSize :: BlockSize
