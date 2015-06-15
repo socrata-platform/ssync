@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, GADTs, BangPatterns, ViewPatterns #-}
+{-# LANGUAGE RankNTypes, GADTs, BangPatterns, ViewPatterns, FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables, LambdaCase, NamedFieldPuns, OverloadedStrings #-}
 
 module SSync.PatchComputer (patchComputer, patchComputer', Chunk(..)) where
