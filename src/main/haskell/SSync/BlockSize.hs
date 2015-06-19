@@ -1,12 +1,15 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 module SSync.BlockSize (
   BlockSize
 , blockSize
-, blockSize'
+, mkBlockSize
 , blockSizeWord
 ) where
 
 import Data.Maybe (fromMaybe)
 import Data.Word (Word32)
+import Language.Haskell.TH
 
 import SSync.Constants (maxBlockSize)
 
@@ -16,6 +19,12 @@ blockSize :: Int -> Maybe BlockSize
 blockSize i | i < 1 = Nothing
             | i > fromIntegral maxBlockSize = Nothing
             | otherwise = Just (BlockSize $ fromIntegral i)
+
+mkBlockSize :: Int -> Q Exp
+mkBlockSize i =
+  case blockSize i of
+    Nothing -> error ("Invalid block size: " ++ show i)
+    Just _ -> [| BlockSize (fromIntegral i) |]
 
 blockSize' :: Int -> BlockSize
 blockSize' = fromMaybe (error "block size out of bounds") . blockSize

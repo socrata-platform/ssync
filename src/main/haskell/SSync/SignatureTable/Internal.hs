@@ -118,7 +118,7 @@ smallify ST{..} =
      }
 
 emptySignature :: SignatureTable
-emptySignature = emptySignature' (blockSize' $ fromIntegral maxBlockSize)
+emptySignature = emptySignature' maxBound
 
 emptySignature' :: BlockSize -> SignatureTable
 emptySignature' (blockSizeWord -> bs) =

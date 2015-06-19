@@ -5,7 +5,7 @@ module SSync.SignatureComputer (
 , signatureTableSize
 , BlockSize
 , blockSize
-, blockSize'
+, mkBlockSize
 , blockSizeWord
 , HashAlgorithm(..)
 , hashForName

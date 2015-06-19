@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, LambdaCase #-}
+{-# LANGUAGE OverloadedStrings, LambdaCase, TemplateHaskell #-}
 module Main where
 
 import Prelude hiding (FilePath)
@@ -67,7 +67,7 @@ file = FP.fromText . T.pack <$> str
 sigOptions :: Parser SigOptions
 sigOptions = SigOptions <$> option hashAlg (long "chk" <> metavar "ALGORITHM" <> help "Checksum algorithm" <> value MD5 <> showDefault <> completeWith (map (T.unpack . nameForHash) [minBound .. maxBound]))
                         <*> option hashAlg (long "strong" <> metavar "ALGORITHM" <> help "Strong hash algorithm" <> value MD5 <> showDefault <> completeWith (map (T.unpack . nameForHash) [minBound .. maxBound]))
-                        <*> option blkSz (long "bs" <> metavar "BLOCKSIZE" <> help "Block size" <> value (blockSize' 102400) <> showDefaultWith (show . blockSizeWord))
+                        <*> option blkSz (long "bs" <> metavar "BLOCKSIZE" <> help "Block size" <> value $(mkBlockSize 102400) <> showDefaultWith (show . blockSizeWord))
                         <*> optional (argument file (metavar "INFILE" <> action "file"))
                         <*> optional (argument file (metavar "OUTFILE" <> action "file"))
 
