@@ -2,6 +2,5 @@ resolvers ++= Seq(
   "socrata releases" at "http://repository-socrata-oss.forge.cloudbees.com/release"
 )
 
-addSbtPlugin("com.socrata" % "socrata-cloudbees-sbt" % "1.2.1")
-
-addSbtPlugin("com.jsuereth" % "xsbt-gpg-plugin" % "0.6")
+addSbtPlugin("com.socrata" % "socrata-sbt-plugins" % "1.5.2")
+addSbtPlugin("com.jsuereth" % "sbt-pgp" % "1.0.0")
