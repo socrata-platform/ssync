@@ -1,19 +1,16 @@
 {-# LANGUAGE OverloadedStrings, LambdaCase, TemplateHaskell #-}
 module Main where
 
-import Prelude hiding (FilePath)
+import Prelude
 
-import Filesystem.Path.CurrentOS (FilePath)
 import Data.Maybe (fromMaybe)
-import qualified Filesystem.Path.CurrentOS as FP
-import qualified Filesystem as FS
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Text as T
 import Conduit
 import Options.Applicative
-import System.IO (hClose, hSeek, SeekMode(AbsoluteSeek))
+import System.IO (hClose, hSeek, SeekMode(AbsoluteSeek), openFile, IOMode(ReadMode))
 import Control.Monad.Trans.Resource (allocate)
 
 import SSync.SignatureTable
@@ -62,7 +59,7 @@ blkSz = do
      readerError "Not a number"
 
 file :: ReadM FilePath
-file = FP.fromText . T.pack <$> str
+file = str
 
 sigOptions :: Parser SigOptions
 sigOptions = SigOptions <$> option hashAlg (long "chk" <> metavar "ALGORITHM" <> help "Checksum algorithm" <> value MD5 <> showDefault <> completeWith (map (T.unpack . nameForHash) [minBound .. maxBound]))
@@ -104,7 +101,7 @@ main = execParser (info (helper <*> commandParser) fullDesc) >>= \case
       sourceFile inFile $$ patchComputer st $= stdoutOr outOpt
   ApplyPatch (PatchOptions inFile diffOpt outOpt) ->
     runResourceT $ do
-      (_, chunkFile) <- allocate (FS.openFile inFile FS.ReadMode) hClose
+      (_, chunkFile) <- allocate (openFile inFile ReadMode) hClose
       let chunkProvider bs bn = liftIO $ do
             hSeek chunkFile AbsoluteSeek (fromIntegral bs * fromIntegral bn)
             result <- BS.hGet chunkFile bs

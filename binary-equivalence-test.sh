@@ -42,11 +42,11 @@ done
 
 set -e
 
-cabal build
+stack build
 sbt clean package
 
 function hsexe {
-    dist/build/ssync/ssync "$@"
+    stack exec -- ssync "$@"
 }
 function jvexe {
     java -jar target/ssync-*.jar "$@"
