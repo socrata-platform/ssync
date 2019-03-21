@@ -25,6 +25,8 @@ public class SignatureTable {
         final int blockNum;
         final int weakHash;
         final byte[] strongHash;
+        int firstOffset; // offset of the first entry with this weak hash
+        int endOffset; // one past the offset of the last entry with this weak hash
 
         Entry(int blockNum, int weakHash, byte[] strongHash) {
             this.blockNum = blockNum;
@@ -139,7 +141,11 @@ public class SignatureTable {
         java.util.Arrays.sort(allEntries, new Comparator<Entry>() {
                 public int compare(Entry a, Entry b) {
                     int major = Integer.compare(hash16(a.weakHash), hash16(b.weakHash));
-                    if(major == 0) return Integer.compare(a.weakHash, b.weakHash);
+                    if(major == 0) {
+                        int minor = Integer.compare(a.weakHash, b.weakHash);
+                        if(minor == 0) return byteArrayCompare(a.strongHash, b.strongHash);
+                        else return minor;
+                    }
                     else return major;
                 }
             });
@@ -151,9 +157,20 @@ public class SignatureTable {
         while(pos != end) {
             int start = pos;
             int hash16 = hash16(allEntries[start].weakHash);
+            int firstHash = start;
             do {
+                if(allEntries[pos].weakHash != allEntries[firstHash].weakHash) {
+                    for(int i = firstHash; i != pos; ++i) {
+                        allEntries[i].endOffset = pos;
+                    }
+                    firstHash = pos;
+                }
+                allEntries[pos].firstOffset = firstHash;
                 pos += 1;
             } while(pos != end && hash16(allEntries[pos].weakHash) == hash16);
+            for(int i = firstHash; i != pos; ++i) {
+                allEntries[i].endOffset = pos;
+            }
             entries[hash16 << 1] = start;
             entries[(hash16 << 1) + 1] = pos;
         }
@@ -191,33 +208,56 @@ public class SignatureTable {
             throw new RuntimeException("Shouldn't happen");
         }
 
-        do {
-            stats.strongProbes += 1;
-            if(java.util.Arrays.equals(strongHash, allEntries[p].strongHash)) {
-                stats.strongHits += 1;
-                return allEntries[p].blockNum;
-            }
-            p += 1;
-        } while(p < end && allEntries[p].weakHash == weakHash);
-        return -1;
+        stats.strongProbes += 1;
+        p = findStrongEntry(allEntries[p].firstOffset, allEntries[p].endOffset, strongHash);
+        if(p != -1) p = allEntries[p].blockNum;
+        return p;
+    }
+
+    private int findStrongEntry(int start, int end, byte[] strongHash) {
+        while(true) {
+            if(end - start < LinearProbeThreshold) return linearProbeStrong(start, end, strongHash);
+            int m = ((end - start) >>> 1) + start;
+
+            int ord = byteArrayCompare(strongHash, allEntries[m].strongHash);
+            if(ord < 0) end = m;
+            else if(ord > 0) start = m+1;
+            else return m;
+        }
+    }
+
+    private static int byteArrayCompare(byte[] a, byte[] b) {
+        int end = Math.min(a.length, b.length);
+        for(int i = 0; i < end; ++i) {
+            int c = Byte.compare(a[i], b[i]);
+            if(c != 0) return c;
+        }
+        return Integer.compare(a.length, b.length);
     }
 
     static final int LinearProbeThreshold = 8;
     private int findFirstWeakEntry(int start, int end, int weakHash) {
         while(true) {
             if(end - start < LinearProbeThreshold) return linearProbe(start, end, weakHash);
-            int m = (start + end) >>> 1;
+            int m = ((end - start) >>> 1) + start;
 
-            int h = allEntries[m].weakHash;
-            if(h < weakHash) start = m+1;
-            else if(h > weakHash) end = m;
-            else end = m + 1; // found one, but we don't know if it's the first one.  Keep it included.
+            int c = Integer.compare(weakHash, allEntries[m].weakHash);
+            if(c < 0) end = m;
+            else if(c > 0) start = m+1;
+            else return allEntries[m].firstOffset;
         }
     }
 
     private int linearProbe(int start, int end, int weakHash) {
         for(int i = start; i != end; ++i) {
             if(allEntries[i].weakHash == weakHash) return i;
+        }
+        return -1;
+    }
+
+    private int linearProbeStrong(int start, int end, byte[] strongHash) {
+        for(int i = start; i != end; ++i) {
+            if(java.util.Arrays.equals(allEntries[i].strongHash, strongHash)) return i;
         }
         return -1;
     }
